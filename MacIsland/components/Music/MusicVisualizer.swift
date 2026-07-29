@@ -13,17 +13,29 @@ class AudioSpectrum: NSView {
     private var barScales: [CGFloat] = []
     private var isPlaying: Bool = true
     private var animationTimer: Timer?
+    private var accessibilityObserver: NSObjectProtocol?
+
+    var isAnimating: Bool { animationTimer != nil }
     
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         setupBars()
+        observeAccessibilityDisplayOptions()
     }
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
         setupBars()
+        observeAccessibilityDisplayOptions()
+    }
+
+    deinit {
+        if let accessibilityObserver {
+            NotificationCenter.default.removeObserver(accessibilityObserver)
+        }
+        stopAnimating()
     }
 
     private func setupBars() {
@@ -40,8 +52,8 @@ class AudioSpectrum: NSView {
             barLayer.frame = CGRect(x: xPosition, y: 0, width: barWidth, height: totalHeight)
             barLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             barLayer.position = CGPoint(x: xPosition + barWidth / 2, y: totalHeight / 2)
-            barLayer.fillColor = NSColor.white.cgColor
-            barLayer.backgroundColor = NSColor.white.cgColor
+            barLayer.fillColor = NSColor(Color.islandPrimaryText).cgColor
+            barLayer.backgroundColor = NSColor(Color.islandPrimaryText).cgColor
             barLayer.allowsGroupOpacity = false
             barLayer.masksToBounds = true
             let path = NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: barWidth, height: totalHeight),
@@ -54,8 +66,8 @@ class AudioSpectrum: NSView {
         }
     }
     
-    private func startAnimating() {
-        guard animationTimer == nil else { return }
+    private func startAnimating(allowsMotion: Bool = IslandMotion.allowsNonessentialMotion) {
+        guard animationTimer == nil, allowsMotion else { return }
         animationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.updateBars()
         }
@@ -68,6 +80,11 @@ class AudioSpectrum: NSView {
     }
     
     private func updateBars() {
+        guard IslandMotion.allowsNonessentialMotion else {
+            stopAnimating()
+            return
+        }
+
         for (i, barLayer) in barLayers.enumerated() {
             let currentScale = barScales[i]
             let targetScale = CGFloat.random(in: 0.35 ... 1.0)
@@ -94,12 +111,25 @@ class AudioSpectrum: NSView {
         }
     }
     
-    func setPlaying(_ playing: Bool) {
+    func setPlaying(_ playing: Bool, reduceMotion: Bool? = nil) {
         isPlaying = playing
-        if isPlaying {
-            startAnimating()
+        let allowsMotion = reduceMotion.map { IslandMotion.allowsNonessentialMotion(reduceMotion: $0) }
+            ?? IslandMotion.allowsNonessentialMotion
+        if isPlaying && allowsMotion {
+            startAnimating(allowsMotion: allowsMotion)
         } else {
             stopAnimating()
+        }
+    }
+
+    private func observeAccessibilityDisplayOptions() {
+        accessibilityObserver = NotificationCenter.default.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.setPlaying(self.isPlaying)
         }
     }
 }

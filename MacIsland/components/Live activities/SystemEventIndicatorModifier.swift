@@ -43,18 +43,18 @@ struct SystemEventIndicatorModifier: View {
                     Image(systemName: "sun.max.fill")
                         .contentTransition(.symbolEffect)
                         .frame(width: 20, height: 15)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.islandPrimaryText)
                 case .backlight:
                     Image(systemName: value > 0.5 ? "light.max" : "light.min")
                         .contentTransition(.interpolate)
                         .frame(width: 20, height: 15)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.islandPrimaryText)
                 case .mic:
                     Image(systemName: "mic")
                         .symbolVariant(value > 0 ? .none : .slash)
                         .contentTransition(.interpolate)
                         .frame(width: 20, height: 15)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.islandPrimaryText)
                 default:
                     EmptyView()
             }
@@ -63,13 +63,13 @@ struct SystemEventIndicatorModifier: View {
                 if Defaults[.showClosedNotchHUDPercentage] {
                     Text("\(Int(value * 100))%")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.islandPrimaryText)
                         .monospacedDigit()
                         .frame(width: 35, alignment: .trailing)
                 }
             } else {
                 Text("Mic \(value > 0 ? "unmuted" : "muted")")
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(Color.islandSecondaryText)
                     .lineLimit(1)
                     .allowsTightening(true)
             }
@@ -115,17 +115,17 @@ struct DraggableProgressBar: View {
                                 AnyShapeStyle(LinearGradient(
                                     colors: Defaults[.systemEventIndicatorUseAccent] ?
                                         [Color.effectiveAccent, Color.effectiveAccent.ensureMinimumBrightness(factor: 0.2)] :
-                                        [Color.white, Color.white.opacity(0.2)],
+                                        [Color.islandPrimaryText, Color.islandTrack],
                                     startPoint: .trailing,
                                     endPoint: .leading
                                 )) :
-                                AnyShapeStyle(Defaults[.systemEventIndicatorUseAccent] ? Color.effectiveAccent : Color.white)
+                                AnyShapeStyle(Defaults[.systemEventIndicatorUseAccent] ? Color.islandFocus : Color.islandPrimaryText)
                         )
                         .frame(width: max(0, min(geo.size.width * value, geo.size.width)))
                         .shadow(color: Defaults[.systemEventIndicatorShadow] ?
                             (Defaults[.systemEventIndicatorUseAccent] ?
                                 Color.effectiveAccent.ensureMinimumBrightness(factor: 0.7) :
-                                Color.white) :
+                                Color.islandPrimaryText) :
                             Color.clear,
                             radius: 8, x: 3)
                         .opacity(value.isZero ? 0 : 1)

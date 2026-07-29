@@ -98,6 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         BatteryActivityManager.shared.shutdown()
         closeNotchTask?.cancel()
         unlockTransitionTask?.cancel()
+        coordinator.setSystemStatesSuspended(true)
         cleanupDragDetectors()
         cleanupWindows()
         XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
@@ -106,7 +107,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func onScreenLocked(_ notification: Notification) {
         isScreenLocked = true
+        setScreenLockState(true)
         WebcamManager.shared.stopSession()
+        cleanupDragDetectors()
         if !Defaults[.showOnLockScreen] {
             cleanupWindows()
         } else {
@@ -117,11 +120,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func onScreenUnlocked(_ notification: Notification) {
         isScreenLocked = false
+        setScreenLockState(false)
+        setupDragDetectors()
         if !Defaults[.showOnLockScreen] {
             adjustWindowPosition(changeAlpha: true)
         } else {
             disableSkyLightOnAllWindows()
         }
+    }
+
+    @MainActor
+    private func setScreenLockState(_ locked: Bool) {
+        vm.setScreenLocked(locked)
+        viewModels.values.forEach { $0.setScreenLocked(locked) }
+
+        if locked {
+            coordinator.dismissTransientActivitiesForLock()
+        }
+        coordinator.setSystemStatesSuspended(locked)
     }
     
     @MainActor
@@ -193,7 +209,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupDragDetectors() {
         cleanupDragDetectors()
 
-        guard Defaults[.expandedDragDetection] else { return }
+        guard AppLifecyclePolicy.shouldMonitorDragDetection(
+            enabled: Defaults[.expandedDragDetection],
+            isScreenLocked: isScreenLocked
+        ) else { return }
 
         if Defaults[.showOnAllDisplays] {
             for screen in NSScreen.screens {
@@ -239,6 +258,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDragEntersNotchRegion(onScreen screen: NSScreen) {
+        guard !isScreenLocked else { return }
         guard let uuid = screen.displayUUID else { return }
         
         if Defaults[.showOnAllDisplays], let viewModel = viewModels[uuid] {
@@ -251,9 +271,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createBoringNotchWindow(for screen: NSScreen, with viewModel: BoringViewModel) -> NSWindow {
-        let metrics = NotchMetrics(screen: screen)
         viewModel.updateMetrics()
-        let rect = NSRect(origin: .zero, size: metrics.panelSize)
+        let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
+        let rect = NSRect(origin: .zero, size: geometry.panelSize)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
         
         let window = BoringNotchSkyLightWindow(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: false)
@@ -286,32 +306,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func positionWindow(_ window: NSWindow, on screen: NSScreen, changeAlpha: Bool = false) {
+    private func positionWindow(
+        _ window: NSWindow,
+        on screen: NSScreen,
+        with viewModel: BoringViewModel,
+        changeAlpha: Bool = false
+    ) {
         if changeAlpha {
             window.alphaValue = 0
         }
 
-        let metrics = NotchMetrics(screen: screen)
-        viewModel(for: window)?.updateMetrics()
-        let panelSize = metrics.panelSize
-        let x = min(
-            max(screen.frame.minX, screen.frame.midX - panelSize.width / 2),
-            screen.frame.maxX - panelSize.width
-        )
-        let frame = NSRect(
-            x: x,
-            y: screen.frame.maxY - panelSize.height,
-            width: panelSize.width,
-            height: panelSize.height
-        )
-        window.setFrame(frame, display: true)
+        // Update the same model that owns this window, then use that exact
+        // panel size for both AppKit and the hosted SwiftUI root.
+        viewModel.updateMetrics()
+        let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
+        window.setFrame(geometry.frame, display: true)
         window.alphaValue = 1
-    }
-
-    private func viewModel(for window: NSWindow) -> BoringViewModel? {
-        if self.window === window { return vm }
-        guard let uuid = window.screen?.displayUUID else { return nil }
-        return viewModels[uuid]
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -398,7 +408,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 self?.adjustWindowPosition(changeAlpha: true)
                 self?.setupDragDetectors()
-                if self?.vm.isCameraExpanded == true { WebcamManager.shared.resumeSessionIfNeeded() }
+                if AppLifecyclePolicy.shouldResumeCameraAfterWake(
+                    isMirrorExpanded: self?.vm.isCameraExpanded == true
+                ) {
+                    WebcamManager.shared.resumeSessionIfNeeded()
+                }
             }
         }
 
@@ -412,6 +426,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         KeyboardShortcuts.onKeyDown(for: .toggleSneakPeek) { [weak self] in
             guard let self = self else { return }
+            guard !self.isScreenLocked else { return }
             if Defaults[.sneakPeekStyles] == .inline {
                 let newStatus = !self.coordinator.expandingView.show
                 self.coordinator.toggleExpandingView(status: newStatus, type: .music)
@@ -427,6 +442,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyDown(for: .toggleNotchOpen) { [weak self] in
             Task { [weak self] in
                 guard let self = self else { return }
+                guard !self.isScreenLocked else { return }
 
                 let mouseLocation = NSEvent.mouseLocation
 
@@ -472,6 +488,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyDown(for: .clipboardHistoryPanel) { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                guard !self.isScreenLocked else { return }
                 self.coordinator.currentView = .clipboard
                 self.vm.open()
             }
@@ -552,7 +569,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let currentScreenUUIDs = Set(NSScreen.screens.compactMap { $0.displayUUID })
 
             // Remove windows for screens that no longer exist
-            for uuid in windows.keys where !currentScreenUUIDs.contains(uuid) {
+            for uuid in AppLifecyclePolicy.detachedDisplayIdentifiers(
+                existing: Set(windows.keys),
+                current: currentScreenUUIDs
+            ) {
                 if let window = windows[uuid] {
                     window.close()
                     NotchSpaceManager.shared.notchSpace.windows.remove(window)
@@ -574,7 +594,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 if let window = windows[uuid], let viewModel = viewModels[uuid] {
-                    positionWindow(window, on: screen, changeAlpha: changeAlpha)
+                    positionWindow(window, on: screen, with: viewModel, changeAlpha: changeAlpha)
 
                     if viewModel.notchState == .closed {
                         viewModel.close()
@@ -607,7 +627,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if let window = window {
-                positionWindow(window, on: selectedScreen, changeAlpha: changeAlpha)
+                positionWindow(window, on: selectedScreen, with: vm, changeAlpha: changeAlpha)
 
                 if vm.notchState == .closed {
                     vm.close()
@@ -677,6 +697,20 @@ extension Notification.Name {
     static let showOnAllDisplaysChanged = Notification.Name("showOnAllDisplaysChanged")
     static let automaticallySwitchDisplayChanged = Notification.Name("automaticallySwitchDisplayChanged")
     static let expandedDragDetectionChanged = Notification.Name("expandedDragDetectionChanged")
+}
+
+enum AppLifecyclePolicy {
+    static func detachedDisplayIdentifiers(existing: Set<String>, current: Set<String>) -> Set<String> {
+        existing.subtracting(current)
+    }
+
+    static func shouldMonitorDragDetection(enabled: Bool, isScreenLocked: Bool) -> Bool {
+        enabled && !isScreenLocked
+    }
+
+    static func shouldResumeCameraAfterWake(isMirrorExpanded: Bool) -> Bool {
+        isMirrorExpanded
+    }
 }
 
 /// Coalesces high-frequency settings writes into one panel-position update per

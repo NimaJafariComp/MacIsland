@@ -16,7 +16,7 @@ struct CircularProgressView: View {
         ZStack {
             Circle()
                 .stroke(
-                    Color.white.opacity(0.2),
+                    Color.islandTrack,
                     lineWidth: 6
                 )
             Circle()
@@ -58,6 +58,6 @@ struct ProgressIndicator: View {
 }
 
 #Preview {
-    ProgressIndicator(type: .circle, progress: 0.8, color: Color.blue).padding()
+    ProgressIndicator(type: .circle, progress: 0.8, color: Color.islandFocus).padding()
         .frame(width: 200, height: 200)
 }

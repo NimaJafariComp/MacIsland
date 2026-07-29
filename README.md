@@ -52,6 +52,30 @@ Run the full local delivery gate with:
 Scripts/validate-xcode.sh
 ```
 
+Capture a reviewed visual state on an approved host with:
+
+```bash
+Scripts/visual-audit.sh /path/to/MacIsland.app /absolute/path/to/audit-output home
+```
+
+The approved native-2× core-state baselines are recorded in
+`Audit/Baselines/native-2x/manifest.plist`. Verify their image integrity,
+display metadata, and required state coverage with:
+
+```bash
+Scripts/verify-ui-baselines.sh Audit/Baselines/native-2x/manifest.plist
+```
+
+On an Assistive-Access host with `cliclick`, prepare the deterministic core
+closed, Home, or hover state before the capture prompt with:
+
+```bash
+Scripts/prepare-ui-audit-state.sh /path/to/MacIsland.app home
+```
+
+The audit harness records display/software metadata with each PNG and refuses to
+claim interaction coverage when Assistive Access is unavailable.
+
 Release signing, notarization, GPL source-offer, and packaging requirements are
 documented in [RELEASE.md](RELEASE.md). Credentials and signing keys are never
 stored in this repository.
@@ -60,6 +84,8 @@ stored in this repository.
 
 MacIsland has one canonical build path: the Xcode project and the validation
 commands above. The embedded XPC helper is built as part of the same project.
+Implementation, test, visual-QA, release, and reporting rules live in
+[AGENTS.md](AGENTS.md).
 
 ## Open-source foundation
 

@@ -25,7 +25,7 @@ struct MusicSlotConfigurationView: View {
             HStack {
                 Spacer()
                 Button("Reset to Defaults") {
-                    withAnimation {
+                    withAnimation(IslandMotion.interaction) {
                         musicControlSlots = MusicControlButton.defaultLayout
                     }
                 }
@@ -145,7 +145,7 @@ struct MusicSlotConfigurationView: View {
                                     if let idx = musicControlSlots.firstIndex(of: .none) {
                                         updateSlot(control, at: idx)
                                     } else {
-                                        withAnimation { updateSlot(control, at: 0) }
+                                        withAnimation(IslandMotion.interaction) { updateSlot(control, at: 0) }
                                     }
                                 }
 

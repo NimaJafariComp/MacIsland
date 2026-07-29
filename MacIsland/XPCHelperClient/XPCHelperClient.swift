@@ -12,7 +12,7 @@ enum XPCHelperConnectionState: Equatable {
 final class XPCHelperClient: NSObject, ObservableObject, @unchecked Sendable {
     nonisolated static let shared = XPCHelperClient()
     
-    private let serviceName = "com.macisland.app.MacIslandXPCHelper"
+    private let serviceName: String
     
     private var remoteService: RemoteXPCService<MacIslandXPCHelperProtocol>?
     private var connection: NSXPCConnection?
@@ -20,6 +20,11 @@ final class XPCHelperClient: NSObject, ObservableObject, @unchecked Sendable {
     private var monitoringTask: Task<Void, Never>?
     @Published private(set) var connectionState: XPCHelperConnectionState = .unknown
     @Published private(set) var accessibilityAuthorized = false
+
+    init(serviceName: String = "com.macisland.app.MacIslandXPCHelper") {
+        self.serviceName = serviceName
+        super.init()
+    }
     
     deinit {
         connection?.invalidate()

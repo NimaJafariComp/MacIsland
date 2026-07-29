@@ -51,11 +51,11 @@ struct InlineHUD: View {
                             EmptyView()
                     }
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.islandPrimaryText)
                 .symbolVariant(.fill)
                 
                 Text(Type2Name(type))
-                    .font(.subheadline)
+                    .font(IslandTypography.body)
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .allowsTightening(true)
@@ -64,13 +64,13 @@ struct InlineHUD: View {
             .frame(width: 100 - (hoverAnimation ? 0 : 12) + gestureProgress / 2, height: vm.notchSize.height - (hoverAnimation ? 0 : 12), alignment: .leading)
             
             Rectangle()
-                .fill(.black)
+                .fill(Color.islandHardwareSurface)
                 .frame(width: vm.closedNotchSize.width - 20)
             
             HStack {
                 if (type == .mic) {
                     Text(value.isZero ? "muted" : "unmuted")
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.islandSecondaryText)
                         .lineLimit(1)
                         .allowsTightening(true)
                         .multilineTextAlignment(.trailing)
@@ -87,17 +87,17 @@ struct InlineHUD: View {
                         })
                         if (type == .volume && value.isZero) {
                             Text("muted")
-                                .font(.caption)
+                                .font(IslandTypography.metadata)
                                 .fontWeight(.medium)
-                                .foregroundStyle(.gray)
+                                .foregroundStyle(Color.islandSecondaryText)
                                 .lineLimit(1)
                                 .allowsTightening(true)
                                 .multilineTextAlignment(.trailing)
                         } else if Defaults[.showClosedNotchHUDPercentage] {
                             Text("\(Int(value * 100))%")
-                                .font(.caption)
+                                .font(IslandTypography.metadata)
                                 .fontWeight(.medium)
-                                .foregroundStyle(.gray)
+                                .foregroundStyle(Color.islandSecondaryText)
                                 .lineLimit(1)
                                 .allowsTightening(true)
                                 .multilineTextAlignment(.trailing)
@@ -156,7 +156,7 @@ struct InlineHUD: View {
 #Preview {
     InlineHUD(type: .constant(.brightness), value: .constant(0.4), icon: .constant(""), hoverAnimation: .constant(false), gestureProgress: .constant(0))
         .padding(.horizontal, 8)
-        .background(Color.black)
+        .background(Color.islandHardwareSurface)
         .padding()
         .environmentObject(BoringViewModel())
 }

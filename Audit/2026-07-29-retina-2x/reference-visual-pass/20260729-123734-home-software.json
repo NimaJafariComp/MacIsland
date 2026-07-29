@@ -1,0 +1,16 @@
+{
+  "SPSoftwareDataType" : [
+    {
+      "_name" : "os_overview",
+      "boot_mode" : "normal_boot",
+      "boot_volume" : "Macintosh HD",
+      "kernel_version" : "Darwin 27.0.0",
+      "local_host_name" : "Nima’s MacBook Pro",
+      "os_version" : "macOS 27.0 (26A5388g)",
+      "secure_vm" : "secure_vm_enabled",
+      "system_integrity" : "integrity_enabled",
+      "uptime" : "up 0:17:9:12",
+      "user_name" : "Nima Jafari (nimajafari)"
+    }
+  ]
+}

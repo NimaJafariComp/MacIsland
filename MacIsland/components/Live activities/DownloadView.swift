@@ -37,14 +37,14 @@ struct DownloadArea: View {
                 }
                 VStack(alignment: .leading) {
                     Text("Download")
-                    Text("In progress").font(.system(.footnote)).foregroundStyle(.gray)
+                    Text("In progress").font(.system(.footnote)).foregroundStyle(Color.islandSecondaryText)
                 }
             }
             Spacer()
             HStack(spacing: 12) {
                 VStack(alignment: .trailing) {
                     Text(watcher.downloadFiles.first!.formattedSize)
-                    Text(watcher.downloadFiles.first!.name).font(.caption2).foregroundStyle(.gray)
+                    Text(watcher.downloadFiles.first!.name).font(.caption2).foregroundStyle(Color.islandSecondaryText)
                 }
             }
         }

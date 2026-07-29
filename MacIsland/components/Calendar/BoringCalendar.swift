@@ -44,7 +44,7 @@ struct WheelPicker: View {
                         dateButton(date: date, isSelected: isSelected, id: index) {
                             selectedDate = date
                             byClick = true
-                            withAnimation {
+                            withAnimation(IslandMotion.interaction) {
                                 scrollPosition = index
                             }
                             if Defaults[.enableHaptics] {
@@ -77,7 +77,7 @@ struct WheelPicker: View {
             let targetIndex = indexForDate(newValue)
             if scrollPosition != targetIndex {
                 byClick = true
-                withAnimation {
+                withAnimation(IslandMotion.interaction) {
                     scrollPosition = targetIndex
                 }
             }
@@ -105,7 +105,7 @@ struct WheelPicker: View {
     private func dayText(date: String, isToday: Bool, isSelected: Bool) -> some View {
         Text(date)
             .font(.caption)
-            .foregroundColor(isSelected ? .white : Color(white: 0.65))
+            .foregroundColor(isSelected ? Color.islandPrimaryText : Color.islandSecondaryText)
     }
 
     private func dateCircle(date: Date, isToday: Bool, isSelected: Bool) -> some View {
@@ -115,12 +115,12 @@ struct WheelPicker: View {
                 .frame(width: 20, height: 20)
                 .overlay(
                     Circle()
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 0)
+                        .stroke(Color.islandBorder, lineWidth: 0)
                 )
             Text("\(date.date)")
                 .font(.body)
                 .fontWeight(.medium)
-                .foregroundColor(isSelected ? .white : Color(white: isToday ? 0.9 : 0.65))
+                .foregroundColor(isSelected || isToday ? Color.islandPrimaryText : Color.islandSecondaryText)
         }
     }
 
@@ -190,23 +190,23 @@ struct CalendarView: View {
                     Text(selectedDate.formatted(.dateTime.month(.abbreviated)))
                         .font(.title3)
                         .fontWeight(.semibold)
-                        .foregroundColor(.white)
+                        .foregroundColor(Color.islandPrimaryText)
                     Text(selectedDate.formatted(.dateTime.year()))
                         .font(.title3)
                         .fontWeight(.light)
-                        .foregroundColor(Color(white: 0.65))
+                        .foregroundColor(Color.islandSecondaryText)
                 }
 
                 ZStack(alignment: .top) {
                     WheelPicker(selectedDate: $selectedDate, config: Config())
                     HStack(alignment: .top) {
                         LinearGradient(
-                            colors: [Color.black, .clear], startPoint: .leading, endPoint: .trailing
+                            colors: [Color.islandHardwareSurface, .clear], startPoint: .leading, endPoint: .trailing
                         )
                         .frame(width: 20)
                         Spacer()
                         LinearGradient(
-                            colors: [.clear, Color.black], startPoint: .leading, endPoint: .trailing
+                            colors: [.clear, Color.islandHardwareSurface], startPoint: .leading, endPoint: .trailing
                         )
                         .frame(width: 20)
                     }
@@ -278,13 +278,19 @@ struct HomeCalendarCard: View {
                 content
             }
         }
-        .padding(12)
+        .padding(IslandStyle.modulePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.islandSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color.islandModuleSurface, in: RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.islandBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+                .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
         }
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: IslandStyle.moduleCornerRadius,
+                style: .continuous
+            )
+        )
         .onAppear {
             Task { await calendarManager.updateCurrentDate(.now) }
         }
@@ -295,7 +301,7 @@ struct HomeCalendarCard: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(weekday)
-                        .font(.caption2.weight(.semibold))
+                    .font(IslandTypography.metadata.weight(.semibold))
                         .foregroundStyle(Color.islandSecondaryText)
                     Text(Date.now.formatted(.dateTime.day()))
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
@@ -303,7 +309,7 @@ struct HomeCalendarCard: View {
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "calendar")
-                    .font(.subheadline.weight(.medium))
+                    .font(IslandTypography.body.weight(.medium))
                     .foregroundStyle(Color.effectiveAccent)
             }
 
@@ -311,25 +317,25 @@ struct HomeCalendarCard: View {
 
             if calendarManager.calendarAuthorizationStatus != .fullAccess {
                 Label("Enable Calendar in Settings", systemImage: "calendar.badge.exclamationmark")
-                    .font(.caption)
+                    .font(IslandTypography.metadata)
                     .foregroundStyle(Color.islandSecondaryText)
                     .lineLimit(2)
             } else if let nextItem {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(nextItem.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .font(IslandTypography.body.weight(.semibold))
+                        .foregroundStyle(Color.islandPrimaryText)
                         .lineLimit(2)
                     Text(nextItem.isAllDay ? "All-day" : nextItem.start.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
+                        .font(IslandTypography.metadata)
                         .foregroundStyle(Color.islandSecondaryText)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Nothing else today")
-                        .font(.subheadline.weight(.semibold))
+                        .font(IslandTypography.body.weight(.semibold))
                     Text("Enjoy clear time.")
-                        .font(.caption)
+                        .font(IslandTypography.metadata)
                         .foregroundStyle(Color.islandSecondaryText)
                 }
             }
@@ -345,13 +351,13 @@ struct EmptyEventsView: View {
         VStack {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title)
-                .foregroundColor(Color(white: 0.65))
+                .foregroundColor(Color.islandSecondaryText)
             Text(Calendar.current.isDateInToday(selectedDate) ? "No events today" : "No events")
                 .font(.subheadline)
-                .foregroundColor(.white)
+                .foregroundColor(Color.islandPrimaryText)
             Text("Enjoy your free time!")
                 .font(.caption)
-                .foregroundColor(Color(white: 0.65))
+                .foregroundColor(Color.islandSecondaryText)
         }
     }
 }
@@ -416,7 +422,7 @@ struct EventListView: View {
                     .padding(.leading, -5)
                     .buttonStyle(PlainButtonStyle())
                     .listRowSeparator(.automatic)
-                    .listRowSeparatorTint(.gray.opacity(0.2))
+                    .listRowSeparatorTint(Color.islandBorder)
                     .listRowBackground(Color.clear)
                 }
             }
@@ -461,7 +467,7 @@ struct EventListView: View {
                     HStack {
                         Text(event.title)
                             .font(.callout)
-                            .foregroundColor(.white)
+                            .foregroundColor(Color.islandPrimaryText)
                             .lineLimit(showFullEventTitles ? nil : 1)
                         Spacer(minLength: 0)
                         VStack(alignment: .trailing, spacing: 4) {
@@ -469,11 +475,11 @@ struct EventListView: View {
                                 Text("All-day")
                                     .font(.caption)
                                     .fontWeight(.medium)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(Color.islandPrimaryText)
                                     .lineLimit(1)
                             } else {
                                 Text(event.start, style: .time)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(Color.islandPrimaryText)
                                     .font(.caption)
                             }
                         }
@@ -499,13 +505,13 @@ struct EventListView: View {
                         Text(event.title)
                             .font(.callout)
                             .fontWeight(.medium)
-                            .foregroundColor(.white)
+                            .foregroundColor(Color.islandPrimaryText)
                             .lineLimit(showFullEventTitles ? nil : 2)
 
                         if let location = event.location, !location.isEmpty {
                             Text(location)
                                 .font(.caption)
-                                .foregroundColor(Color(white: 0.65))
+                                .foregroundColor(Color.islandSecondaryText)
                                 .lineLimit(1)
                         }
                     }
@@ -515,13 +521,13 @@ struct EventListView: View {
                             Text("All-day")
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundColor(.white)
+                                .foregroundColor(Color.islandPrimaryText)
                                 .lineLimit(1)
                         } else {
                             Text(event.start, style: .time)
-                                .foregroundColor(.white)
+                                .foregroundColor(Color.islandPrimaryText)
                             Text(event.end, style: .time)
-                                .foregroundColor(Color(white: 0.65))
+                                .foregroundColor(Color.islandSecondaryText)
                         }
                     }
                     .font(.caption)
@@ -555,7 +561,7 @@ struct ReminderToggle: View {
                         .frame(width: 8, height: 8)
                 }
                 Circle()
-                    .fill(Color.black.opacity(0.001))
+                    .fill(Color.islandHitTarget)
                     .frame(width: 14, height: 14)
             }
         }
@@ -568,6 +574,6 @@ struct ReminderToggle: View {
 #Preview {
     CalendarView()
         .frame(width: 215, height: 130)
-        .background(.black)
+        .background(Color.islandHardwareSurface)
         .environmentObject(BoringViewModel())
 }

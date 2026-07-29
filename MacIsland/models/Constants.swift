@@ -142,6 +142,12 @@ extension Defaults.Keys {
     //static let openLastTabByDefault = Key<Bool>("openLastTabByDefault", default: false)
     static let showOnLockScreen = Key<Bool>("showOnLockScreen", default: false)
     static let hideFromScreenRecording = Key<Bool>("hideFromScreenRecording", default: false)
+
+    // MARK: Opt-in system states
+    static let focusIndicatorEnabled = Key<Bool>("focusIndicatorEnabled", default: false)
+    static let focusIndicatorActive = Key<Bool>("focusIndicatorActive", default: false)
+    static let focusIndicatorName = Key<String>("focusIndicatorName", default: "Focus")
+    static let connectivityActivityEnabled = Key<Bool>("connectivityActivityEnabled", default: false)
     
     // MARK: Appearance
     static let showEmojis = Key<Bool>("showEmojis", default: false)
@@ -233,7 +239,7 @@ extension Defaults.Keys {
     static let weatherTemperatureUnit = Key<WeatherTemperatureUnit>("weatherTemperatureUnit", default: .celsius)
 
     // MARK: Timer
-    static let timerCompletionNotifications = Key<Bool>("timerCompletionNotifications", default: false)
+    static let timerCompletionNotifications = Key<Bool>("timerCompletionNotifications", default: true)
     static let timerPresets = Key<[TimerPreset]>("timerPresets", default: [])
     
     // MARK: Calendar

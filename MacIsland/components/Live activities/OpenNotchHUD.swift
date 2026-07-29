@@ -42,8 +42,8 @@ struct OpenNotchHUD: View {
                     EmptyView()
                 }
             }
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.white)
+            .font(IslandTypography.control)
+            .foregroundStyle(Color.islandPrimaryText)
             .frame(width: 20, alignment: .center)
             
             // Slider or Status Text
@@ -54,16 +54,16 @@ struct OpenNotchHUD: View {
                 .frame(width: showPercentage ? 65 : 108) // Fixed width for consistency
             } else {
                 Text(value > 0 ? "Unmuted" : "Muted")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
+                    .font(IslandTypography.body.weight(.medium))
+                    .foregroundStyle(Color.islandPrimaryText)
                     .fixedSize()
             }
             
             // Percentage Text
             if type != .mic && showPercentage {
                 Text("\(Int(value * 100))%")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.gray)
+                    .font(IslandTypography.metadata.weight(.medium))
+                    .foregroundStyle(Color.islandSecondaryText)
                     .monospacedDigit()
                     .frame(width: 35, alignment: .trailing)
             }
@@ -72,8 +72,8 @@ struct OpenNotchHUD: View {
         .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(Color.black)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                .fill(Color.islandHardwareSurface)
+                .stroke(Color.islandBorder, lineWidth: 1)
         )
     }
     
@@ -102,5 +102,5 @@ struct OpenNotchHUD: View {
     OpenNotchHUD(type: .constant(.volume), value: .constant(0.5), icon: .constant(""))
         .environmentObject(BoringViewModel())
         .padding()
-        .background(Color.gray)
+        .background(Color.islandSurface)
 }

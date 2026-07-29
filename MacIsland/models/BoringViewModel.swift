@@ -5,18 +5,26 @@
 //  Created by Harsh Vardhan  Goswami  on 04/08/24.
 //
 
+import AVFoundation
 import Combine
 import Defaults
 import os
 import SwiftUI
+
+enum CameraPreviewPolicy {
+    static func canStart(
+        authorizationStatus: AVAuthorizationStatus,
+        cameraAvailable: Bool
+    ) -> Bool {
+        authorizationStatus == .authorized && cameraAvailable
+    }
+}
 
 class BoringViewModel: NSObject, ObservableObject {
     private static let lifecycleLog = OSLog(subsystem: "com.macisland.app", category: "IslandLifecycle")
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @ObservedObject var detector = FullscreenMediaDetector.shared
 
-    let animationLibrary: BoringAnimations = .init()
-    let animation: Animation?
     @Published var contentType: ContentType = .normal
     @Published private(set) var notchState: NotchState = .closed
 
@@ -27,7 +35,11 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published var anyDropZoneTargeting: Bool = false
     var cancellables: Set<AnyCancellable> = []
     
-    @Published var hideOnClosed: Bool = true
+    // Stay visible until fullscreen detection has positively identified a
+    // fullscreen app. Starting hidden suppresses closed live activities before
+    // the detector's first asynchronous publication.
+    @Published var hideOnClosed: Bool = false
+    @Published private(set) var isScreenLocked: Bool = false
 
     @Published var edgeAutoOpenActive: Bool = false
     @Published var isHoveringCalendar: Bool = false
@@ -37,6 +49,8 @@ class BoringViewModel: NSObject, ObservableObject {
 
     @Published var notchSize: CGSize = getClosedNotchSize()
     @Published var closedNotchSize: CGSize = getClosedNotchSize()
+    @Published private(set) var closedSurfaceSize: CGSize = getClosedNotchSize()
+    @Published private(set) var hoverHitSize: CGSize = getClosedNotchSize()
     @Published var openIslandSize: CGSize = preferredOpenIslandSize
     @Published var panelSize: CGSize = CGSize(width: preferredOpenIslandSize.width, height: preferredOpenIslandSize.height + shadowPadding)
     
@@ -55,8 +69,6 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     init(screenUUID: String? = nil) {
-        animation = animationLibrary.animation
-
         super.init()
         
         self.screenUUID = screenUUID
@@ -142,6 +154,7 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func toggleCameraPreview() {
+        guard !isScreenLocked else { return }
         if isRequestingAuthorization {
             return
         }
@@ -151,7 +164,10 @@ class BoringViewModel: NSObject, ObservableObject {
             if webcamManager.isSessionRunning {
                 webcamManager.stopSession()
                 isCameraExpanded = false
-            } else if webcamManager.cameraAvailable {
+            } else if CameraPreviewPolicy.canStart(
+                authorizationStatus: webcamManager.authorizationStatus,
+                cameraAvailable: webcamManager.cameraAvailable
+            ) {
                 webcamManager.startSession()
                 isCameraExpanded = true
             }
@@ -189,16 +205,14 @@ class BoringViewModel: NSObject, ObservableObject {
     
     func isMouseHovering(position: NSPoint = NSEvent.mouseLocation) -> Bool {
         if let metrics = notchMetrics(screenUUID: screenUUID) {
-            let hit = metrics.hoverHitSize
-            let baseY = metrics.screenFrame.maxY - hit.height
-            let baseX = metrics.screenFrame.midX - hit.width / 2
-            return position.y >= baseY && position.x >= baseX && position.x <= baseX + hit.width
+            return metrics.containsHoverPoint(position)
         }
         
         return false
     }
 
     func open() {
+        guard !isScreenLocked else { return }
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "open")
         updateMetrics()
@@ -247,16 +261,36 @@ class BoringViewModel: NSObject, ObservableObject {
         }
     }
 
+    func setScreenLocked(_ locked: Bool) {
+        guard isScreenLocked != locked else { return }
+        isScreenLocked = locked
+        guard locked else { return }
+
+        updateMetrics()
+        withAnimation(IslandMotion.state) {
+            notchSize = closedNotchSize
+            notchState = .closed
+        }
+        isBatteryPopoverActive = false
+        edgeAutoOpenActive = false
+        if isCameraExpanded {
+            webcamManager.stopSession()
+            isCameraExpanded = false
+        }
+    }
+
     func updateMetrics() {
         guard let metrics = notchMetrics(screenUUID: screenUUID) else { return }
         closedNotchSize = metrics.closedIslandSize
+        closedSurfaceSize = metrics.closedSurfaceSize
+        hoverHitSize = metrics.hoverHitSize
         openIslandSize = metrics.openIslandSize
         panelSize = metrics.panelSize
     }
 
     func closeHello() {
         Task { @MainActor in
-            withAnimation(animationLibrary.animation) {
+            withAnimation(IslandMotion.state) {
                 coordinator.helloAnimationRunning = false
                 close()
             }

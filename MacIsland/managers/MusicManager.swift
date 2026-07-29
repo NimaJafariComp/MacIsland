@@ -35,7 +35,6 @@ class MusicManager: ObservableObject {
     @Published var isPlaying = false
     @Published var album: String = ""
     @Published var isPlayerIdle: Bool = true
-    @Published var animations: BoringAnimations = .init()
     @Published var avgColor: NSColor = .white
     @Published var bundleIdentifier: String? = nil
     @Published var songDuration: TimeInterval = 0
@@ -556,7 +555,7 @@ class MusicManager: ObservableObject {
             debounceIdleTask = Task { [weak self] in
                 guard let self = self else { return }
                 try? await Task.sleep(for: .seconds(Defaults[.waitInterval]))
-                withAnimation {
+                withAnimation(IslandMotion.content) {
                     self.isPlayerIdle = !self.isPlaying
                 }
             }

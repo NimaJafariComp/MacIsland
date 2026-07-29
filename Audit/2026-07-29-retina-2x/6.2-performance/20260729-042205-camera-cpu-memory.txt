@@ -1,0 +1,5 @@
+samples=6
+cpu_median_percent=2.3
+cpu_max_percent=2.6
+peak_rss_mib=145.0
+last_rss=144M

@@ -103,15 +103,26 @@ class QuickShareService: ObservableObject {
         panel.message = "Choose files to share via \(provider.id)"
 
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            defer {
+            guard SharingInteractionPolicy.shouldTransferFilePickerLease(
+                response: response,
+                selectedItemCount: panel.urls.count
+            ) else {
                 self?.isPickerOpen = false
                 SharingStateManager.shared.endInteraction()
+                return
             }
 
-            if response == .OK && !panel.urls.isEmpty {
-                Task {
-                    await self?.shareFilesOrText(panel.urls, using: provider, from: view)
+            // Hold the file-picker lease until the sharing delegate has begun.
+            // Releasing first lets the nonactivating panel close between the
+            // user's file selection and the native sharing UI.
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    SharingStateManager.shared.endInteraction()
+                    return
                 }
+                await self.shareFilesOrText(panel.urls, using: provider, from: view)
+                self.isPickerOpen = false
+                SharingStateManager.shared.endInteraction()
             }
         }
 
@@ -135,7 +146,17 @@ class QuickShareService: ObservableObject {
         // Start security-scoped access for all file URLs
         sharingAccessingURLs = fileURLs.filter { $0.startAccessingSecurityScopedResource() }
 
-        // Setup lifecycle delegate to keep notch open during picker/service
+        let directService = cachedServices[provider.id]
+        if directService?.canPerform(withItems: items) != true,
+           !SharingInteractionPolicy.canPresentSystemPicker(from: view) {
+            // NSSharingServicePicker has no safe presentation without a view.
+            // Clean up synchronously instead of retaining the island forever.
+            stopSharingAccessingURLs()
+            cleanupTemporaryURLs()
+            return
+        }
+
+        // Setup lifecycle delegate to keep notch open during picker/service.
         let delegate = SharingStateManager.shared.makeDelegate { [weak self] in
             self?.lifecycleDelegate = nil
             self?.stopSharingAccessingURLs()
@@ -143,18 +164,16 @@ class QuickShareService: ObservableObject {
         }
         lifecycleDelegate = delegate
 
-        if let svc = cachedServices[provider.id], svc.canPerform(withItems: items) {
+        if let directService, directService.canPerform(withItems: items) {
             // For direct service path, explicitly mark service interaction start
             delegate.markServiceBegan()
-            svc.delegate = delegate
-            svc.perform(withItems: items)
+            directService.delegate = delegate
+            directService.perform(withItems: items)
         } else {
             let picker = NSSharingServicePicker(items: items)
             picker.delegate = delegate
             delegate.markPickerBegan()
-            if let view {
-                picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
-            }
+            picker.show(relativeTo: .zero, of: view!, preferredEdge: .minY)
         }
     }
 

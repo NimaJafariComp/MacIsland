@@ -26,16 +26,19 @@ final class QuickLookService: ObservableObject {
     func show(urls: [URL], selectFirst: Bool = true, slideshow: Bool = false) {
         guard !urls.isEmpty else { return }
         stopAccessingCurrentURLs()
+        // A normal local URL does not need security-scoped access. Keep every
+        // requested URL in the preview list and track only scopes that we
+        // successfully opened so cleanup remains balanced.
         accessingURLs = urls.filter { url in
             if url.isFileURL {
                 return url.startAccessingSecurityScopedResource()
             }
             return true
         }
-        self.urls = accessingURLs
+        self.urls = urls
         self.isQuickLookOpen = true
         if selectFirst {
-            self.selectedURL = accessingURLs.first
+            self.selectedURL = urls.first
         }
         // Observe the shared Quick Look preview panel closing so we can relinquish security scope
         let panel = QLPreviewPanel.shared()

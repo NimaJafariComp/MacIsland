@@ -125,7 +125,7 @@ struct OnboardingView: View {
             case .musicPermission:
                 MusicControllerSelectionView(
                     onContinue: {
-                        withAnimation(.easeInOut(duration: 0.6)) {
+                        withAnimation(IslandMotion.content) {
                             BoringViewCoordinator.shared.firstLaunch = false
                             step = .finished
                         }

@@ -47,7 +47,7 @@ struct FileShareView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             vm.dropZoneTargeting
-                                ? Color.effectiveAccent.opacity(0.9)
+                                ? Color.islandFocus.opacity(0.9)
                                 : Color.islandBorder,
                             lineWidth: vm.dropZoneTargeting ? 2 : 1
                         )
@@ -58,9 +58,7 @@ struct FileShareView: View {
             VStack(spacing: 5) {
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(
-                            vm.dropZoneTargeting ? 0.11 : 0.09
-                        ))
+                        .fill(vm.dropZoneTargeting ? Color.islandPressedSurface : Color.islandElevatedSurface)
                         .frame(width: 55, height: 55)
                     Image(systemName: "square.and.arrow.up")
                     Group {
@@ -73,7 +71,7 @@ struct FileShareView: View {
                         }
                     }
                     .frame(width: 34, height: 34)
-                        .foregroundStyle(vm.dropZoneTargeting ? Color.effectiveAccent : Color.islandSecondaryText)
+                        .foregroundStyle(vm.dropZoneTargeting ? Color.islandFocus : Color.islandSecondaryText)
                         .scaleEffect(
                             vm.dropZoneTargeting ? 1.06 : 1.0
                         )
@@ -81,8 +79,8 @@ struct FileShareView: View {
                 }
 
                 Text(selectedProvider.id)
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .foregroundColor(.white.opacity(0.86))
+                    .font(IslandTypography.title)
+                    .foregroundColor(Color.islandPrimaryText)
 
             }
             .padding(18)
@@ -90,10 +88,10 @@ struct FileShareView: View {
             // Loading overlay
             if isProcessing || quickShare.isPickerOpen {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.black.opacity(0.3))
+                    .fill(Color.islandScrim)
                     .overlay(
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color.islandPrimaryText))
                             .scaleEffect(0.8)
                     )
             }

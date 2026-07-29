@@ -14,8 +14,88 @@ import Sparkle
 import SwiftUI
 import SwiftUIIntrospect
 
+enum SettingsDestination: Hashable, Identifiable {
+    case appearance
+    case behavior
+    case gestures
+    case media
+    case calendar
+    case timer
+    case weather
+    case hud
+    case battery
+    case systemStates
+    case shelf
+    case advanced
+    case about
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .appearance: "Island"
+        case .behavior: "Island & display"
+        case .gestures: "Controls & shortcuts"
+        case .media: "Media"
+        case .calendar: "Calendar"
+        case .timer: "Timer"
+        case .weather: "Weather"
+        case .hud: "HUDs"
+        case .battery: "Battery"
+        case .systemStates: "System States"
+        case .shelf: "Shelf"
+        case .advanced: "Advanced"
+        case .about: "About"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .appearance: "eye"
+        case .behavior: "rectangle.3.group"
+        case .gestures: "hand.draw"
+        case .media: "play.laptopcomputer"
+        case .calendar: "calendar"
+        case .timer: "timer"
+        case .weather: "cloud.sun"
+        case .hud: "dial.medium.fill"
+        case .battery: "battery.100.bolt"
+        case .systemStates: "dot.radiowaves.left.and.right"
+        case .shelf: "books.vertical"
+        case .advanced: "gearshape.2"
+        case .about: "info.circle"
+        }
+    }
+}
+
+enum SettingsNavigationGroup: String, CaseIterable, Identifiable {
+    case appearance = "Appearance"
+    case behavior = "Behavior"
+    case gestures = "Gestures"
+    case modules = "Modules"
+    case advanced = "Advanced"
+
+    var id: String { rawValue }
+
+    var destinations: [SettingsDestination] {
+        switch self {
+        case .appearance: [.appearance]
+        case .behavior: [.behavior]
+        case .gestures: [.gestures]
+        case .modules: [.media, .calendar, .timer, .weather, .hud, .battery, .systemStates, .shelf]
+        case .advanced: [.advanced, .about]
+        }
+    }
+}
+
+enum GestureSettingsPolicy {
+    static func trackpadControlsAvailable(hoverOpenEnabled: Bool) -> Bool {
+        !hoverOpenEnabled
+    }
+}
+
 struct SettingsView: View {
-    @State private var selectedTab = "General"
+    @State private var selectedTab: SettingsDestination = .appearance
     @State private var settingsAccent = Color.effectiveAccent
 
     let updaterController: SPUStandardUpdaterController?
@@ -27,66 +107,53 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedTab) {
-                Section("General") {
-                    NavigationLink(value: "General") {
-                        Label("General", systemImage: "gear")
+                ForEach(SettingsNavigationGroup.allCases) { group in
+                    Section(group.rawValue) {
+                        ForEach(group.destinations) { destination in
+                            NavigationLink(value: destination) {
+                                Label(destination.title, systemImage: destination.symbol)
+                            }
+                            .accessibilityLabel("\(group.rawValue): \(destination.title)")
+                            .accessibilityHint("Shows \(destination.title.lowercased()) settings")
+                        }
                     }
-                    NavigationLink(value: "Appearance") {
-                        Label("Appearance", systemImage: "eye")
-                    }
-                }
-                Section("Features") {
-                    NavigationLink(value: "Media") { Label("Media", systemImage: "play.laptopcomputer") }
-                    NavigationLink(value: "Calendar") { Label("Calendar", systemImage: "calendar") }
-                    NavigationLink(value: "Timer") { Label("Timer", systemImage: "timer") }
-                    NavigationLink(value: "Weather") { Label("Weather", systemImage: "cloud.sun") }
-                    NavigationLink(value: "HUD") { Label("HUDs", systemImage: "dial.medium.fill") }
-                    NavigationLink(value: "Battery") { Label("Battery", systemImage: "battery.100.bolt") }
-                    NavigationLink(value: "Shelf") { Label("Shelf", systemImage: "books.vertical") }
-                }
-                Section("Gestures & Shortcuts") {
-                    NavigationLink(value: "Shortcuts") { Label("Shortcuts", systemImage: "keyboard") }
-                }
-                Section("Updates & About") {
-                    NavigationLink(value: "Advanced") { Label("Advanced", systemImage: "gearshape.2") }
-                    NavigationLink(value: "About") { Label("About", systemImage: "info.circle") }
                 }
             }
             .listStyle(SidebarListStyle())
             .tint(settingsAccent)
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(200)
+            .accessibilityLabel("MacIsland Settings sections")
+            .accessibilityHint("Use the arrow keys to move between settings sections")
         } detail: {
             Group {
                 switch selectedTab {
-                case "General":
-                    GeneralSettings()
-                case "Appearance":
+                case .appearance:
                     Appearance()
-                case "Media":
+                case .behavior:
+                    BehaviorSettings()
+                case .gestures:
+                    GesturesSettings()
+                case .media:
                     Media()
-                case "Calendar":
+                case .calendar:
                     CalendarSettings()
-                case "Timer":
+                case .timer:
                     TimerSettings()
-                case "Weather":
+                case .weather:
                     WeatherSettings()
-                case "HUD":
+                case .hud:
                     HUD()
-                case "Battery":
+                case .battery:
                     Charge()
-                case "Shelf":
+                case .systemStates:
+                    SystemStatesSettings()
+                case .shelf:
                     Shelf()
-                case "Shortcuts":
-                    Shortcuts()
-                case "Extensions":
-                    GeneralSettings()
-                case "Advanced":
+                case .advanced:
                     Advanced()
-                case "About":
+                case .about:
                     About(updaterController: updaterController)
-                default:
-                    GeneralSettings()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -123,7 +190,7 @@ private struct TimerSettings: View {
                 Defaults.Toggle(key: .timerCompletionNotifications) {
                     Text("Notify when countdown finishes")
                 }
-                Text("MacIsland asks for notification permission only after you turn this on and start a countdown.")
+                Text("MacIsland asks for notification permission when you start a countdown. Turn this off to keep timers silent.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -163,6 +230,59 @@ private struct TimerSettings: View {
         .onChange(of: timerCompletionNotifications) { _, _ in
             coordinator.updateTimerNotificationPreference()
         }
+    }
+}
+
+private struct SystemStatesSettings: View {
+    @Default(.focusIndicatorEnabled) private var focusIndicatorEnabled
+    @Default(.focusIndicatorActive) private var focusIndicatorActive
+    @Default(.focusIndicatorName) private var focusIndicatorName
+    @Default(.connectivityActivityEnabled) private var connectivityActivityEnabled
+    @Default(.showOnLockScreen) private var showOnLockScreen
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+
+    private var connectivityLabel: String {
+        switch coordinator.connectivityState {
+        case .unknown: "Not monitoring"
+        case .online: "Connected"
+        case .offline: "Offline"
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Show Focus state", isOn: $focusIndicatorEnabled)
+                TextField("Focus label", text: $focusIndicatorName)
+                    .disabled(!focusIndicatorEnabled)
+                Toggle("Focus session active", isOn: $focusIndicatorActive)
+                    .disabled(!focusIndicatorEnabled)
+            } header: {
+                Text("Focus")
+            } footer: {
+                Text("Set this private indicator in MacIsland. macOS does not expose other apps’ Focus state through a public sandboxed API.")
+            }
+
+            Section {
+                Toggle("Show connectivity changes", isOn: $connectivityActivityEnabled)
+                HStack {
+                    Text("Current status")
+                    Spacer()
+                    Text(connectivityLabel)
+                        .foregroundStyle(Color.islandSecondaryText)
+                }
+            } header: {
+                Text("Connectivity")
+            } footer: {
+                Text("MacIsland monitors only whether an internet route is available. It never reads your network name, address, or traffic.")
+            }
+
+            Section("Lock screen") {
+                Toggle("Show safe hardware bridge on lock screen", isOn: $showOnLockScreen)
+                Text("When enabled, MacIsland shows only its non-interactive hardware bridge. Media, timers, Focus, connectivity, Shelf, and camera content stay hidden until you unlock.")
+            }
+        }
+        .navigationTitle("System States")
     }
 }
 
@@ -211,26 +331,19 @@ private struct WeatherSettings: View {
     }
 }
 
-struct GeneralSettings: View {
+struct BehaviorSettings: View {
     @State private var screens: [(uuid: String, name: String)] = NSScreen.screens.compactMap { screen in
         guard let uuid = screen.displayUUID else { return nil }
         return (uuid, screen.localizedName)
     }
-    @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var coordinator = BoringViewCoordinator.shared
 
-    @Default(.mirrorShape) var mirrorShape
-    @Default(.showEmojis) var showEmojis
-    @Default(.gestureSensitivity) var gestureSensitivity
-    @Default(.minimumHoverDuration) var minimumHoverDuration
     @Default(.nonNotchHeight) var nonNotchHeight
     @Default(.nonNotchHeightMode) var nonNotchHeightMode
     @Default(.notchHeight) var notchHeight
     @Default(.notchHeightMode) var notchHeightMode
     @Default(.showOnAllDisplays) var showOnAllDisplays
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
-    @Default(.enableGestures) var enableGestures
-    @Default(.openNotchOnHover) var openNotchOnHover
     
 
     var body: some View {
@@ -308,11 +421,9 @@ struct GeneralSettings: View {
                         PanelLayoutInvalidator.shared.request()
                     }
                 }
-                Picker("Notch height on non-notch displays", selection: $nonNotchHeightMode) {
+                Picker("Synthetic island height on notchless displays", selection: $nonNotchHeightMode) {
                     Text("Match menubar height")
                         .tag(WindowHeightMode.matchMenuBar)
-                    Text("Match real notch height")
-                        .tag(WindowHeightMode.matchRealNotchSize)
                     Text("Custom height")
                         .tag(WindowHeightMode.custom)
                 }
@@ -320,10 +431,12 @@ struct GeneralSettings: View {
                     switch nonNotchHeightMode {
                     case .matchMenuBar:
                         nonNotchHeight = 24
-                    case .matchRealNotchSize:
-                        nonNotchHeight = 32
                     case .custom:
                         nonNotchHeight = 32
+                    case .matchRealNotchSize:
+                        // Preserve legacy defaults while metrics maps them to
+                        // menu-bar height on notchless displays.
+                        nonNotchHeight = 24
                     }
                     PanelLayoutInvalidator.shared.request()
                 }
@@ -339,9 +452,6 @@ struct GeneralSettings: View {
                 Text("Notch sizing")
             }
 
-            NotchBehaviour()
-
-            gestureControls()
         }
         .toolbar {
             Button("Quit app") {
@@ -350,79 +460,82 @@ struct GeneralSettings: View {
             .controlSize(.extraLarge)
         }
         .accentColor(.effectiveAccent)
-        .navigationTitle("General")
-        .onChange(of: openNotchOnHover) {
-            if !openNotchOnHover {
+        .navigationTitle("Behavior")
+    }
+}
+
+private struct GesturesSettings: View {
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @Default(.gestureSensitivity) private var gestureSensitivity
+    @Default(.minimumHoverDuration) private var minimumHoverDuration
+    @Default(.enableGestures) private var enableGestures
+    @Default(.openNotchOnHover) private var openNotchOnHover
+
+    var body: some View {
+        Form {
+            Section("Pointer") {
+                Defaults.Toggle(key: .openNotchOnHover) {
+                    Text("Open notch on hover")
+                }
+                Defaults.Toggle(key: .enableHaptics) {
+                    Text("Enable haptic feedback")
+                }
+                Toggle("Remember last tab", isOn: $coordinator.openLastTabByDefault)
+                if openNotchOnHover {
+                    Slider(value: $minimumHoverDuration, in: 0...1, step: 0.1) {
+                        HStack {
+                            Text("Hover delay")
+                            Spacer()
+                            Text("\(minimumHoverDuration, specifier: "%.1f")s")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .onChange(of: minimumHoverDuration) { _, _ in
+                        PanelLayoutInvalidator.shared.request()
+                    }
+                }
+            }
+
+            Section {
+                if GestureSettingsPolicy.trackpadControlsAvailable(hoverOpenEnabled: openNotchOnHover) {
+                    Defaults.Toggle(key: .enableGestures) {
+                        Text("Enable trackpad gestures")
+                    }
+                    if enableGestures {
+                        Toggle("Change media with horizontal gestures", isOn: .constant(false))
+                            .disabled(true)
+                        Defaults.Toggle(key: .closeGestureEnabled) {
+                            Text("Close gesture")
+                        }
+                        Slider(value: $gestureSensitivity, in: 100...300, step: 100) {
+                            HStack {
+                                Text("Gesture sensitivity")
+                                Spacer()
+                                Text(
+                                    gestureSensitivity == 100
+                                        ? "High" : gestureSensitivity == 200 ? "Medium" : "Low"
+                                )
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } else {
+                    Text("Turn off hover-open to configure trackpad gestures.")
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Trackpad")
+            } footer: {
+                Text("When hover-open is off, swipe down with two fingers on the notch to open it and swipe up to close it.")
+            }
+
+            ShortcutSettingsSections()
+        }
+        .navigationTitle("Gestures")
+        .onChange(of: openNotchOnHover) { _, enabled in
+            if !enabled {
                 enableGestures = true
             }
-        }
-    }
-
-    @ViewBuilder
-    func gestureControls() -> some View {
-        Section {
-            Defaults.Toggle(key: .enableGestures) {
-                Text("Enable gestures")
-            }
-                .disabled(!openNotchOnHover)
-            if enableGestures {
-                Toggle("Change media with horizontal gestures", isOn: .constant(false))
-                    .disabled(true)
-                Defaults.Toggle(key: .closeGestureEnabled) {
-                    Text("Close gesture")
-                }
-                Slider(value: $gestureSensitivity, in: 100...300, step: 100) {
-                    HStack {
-                        Text("Gesture sensitivity")
-                        Spacer()
-                        Text(
-                            Defaults[.gestureSensitivity] == 100
-                                ? "High" : Defaults[.gestureSensitivity] == 200 ? "Medium" : "Low"
-                        )
-                        .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        } header: {
-            HStack {
-                Text("Gesture control")
-                customBadge(text: "Beta")
-            }
-        } footer: {
-            Text(
-                "Two-finger swipe up on notch to close, two-finger swipe down on notch to open when **Open notch on hover** option is disabled"
-            )
-            .multilineTextAlignment(.trailing)
-            .foregroundStyle(.secondary)
-            .font(.caption)
-        }
-    }
-
-    @ViewBuilder
-    func NotchBehaviour() -> some View {
-        Section {
-            Defaults.Toggle(key: .openNotchOnHover) {
-                Text("Open notch on hover")
-            }
-            Defaults.Toggle(key: .enableHaptics) {
-                    Text("Enable haptic feedback")
-            }
-            Toggle("Remember last tab", isOn: $coordinator.openLastTabByDefault)
-            if openNotchOnHover {
-                Slider(value: $minimumHoverDuration, in: 0...1, step: 0.1) {
-                    HStack {
-                        Text("Hover delay")
-                        Spacer()
-                        Text("\(minimumHoverDuration, specifier: "%.1f")s")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .onChange(of: minimumHoverDuration) {
-                    PanelLayoutInvalidator.shared.request()
-                }
-            }
-        } header: {
-            Text("Notch behavior")
         }
     }
 }
@@ -569,6 +682,8 @@ struct HUD: View {
                     .toggleStyle(.switch)
                     .controlSize(.large)
                     .disabled(!accessibilityAuthorized)
+                    .accessibilityLabel("Replace system HUD")
+                    .accessibilityHint("Replaces the standard macOS volume and brightness indicators")
                 }
                 
                 if !accessibilityAuthorized {
@@ -643,7 +758,7 @@ struct HUD: View {
                 }
                 .onChange(of: Defaults[.inlineHUD]) {
                     if Defaults[.inlineHUD] {
-                        withAnimation {
+                        withAnimation(IslandMotion.interaction) {
                             Defaults[.systemEventIndicatorShadow] = false
                             Defaults[.enableGradient] = false
                         }
@@ -939,7 +1054,6 @@ func lighterColor(from nsColor: NSColor, amount: CGFloat = 0.14) -> Color {
 struct About: View {
     @State private var showBuildNumber: Bool = false
     let updaterController: SPUStandardUpdaterController?
-    @Environment(\.openWindow) var openWindow
     var body: some View {
         VStack {
             Form {
@@ -950,21 +1064,25 @@ struct About: View {
                         Text(Defaults[.releaseName])
                             .foregroundStyle(.secondary)
                     }
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        if showBuildNumber {
-                            Text("(\(Bundle.main.buildVersionNumber ?? ""))")
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(Bundle.main.releaseVersionNumber ?? "unkown")
-                            .foregroundStyle(.secondary)
-                    }
-                    .onTapGesture {
-                        withAnimation {
+                    Button {
+                        withAnimation(IslandMotion.interaction) {
                             showBuildNumber.toggle()
                         }
+                    } label: {
+                        HStack {
+                            Text("Version")
+                            Spacer()
+                            if showBuildNumber {
+                                Text("(\(Bundle.main.buildVersionNumber ?? ""))")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(Bundle.main.releaseVersionNumber ?? "unkown")
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Version \(Bundle.main.releaseVersionNumber ?? "unknown")")
+                    .accessibilityHint("Shows or hides the build number")
                 } header: {
                     Text("Version info")
                 }
@@ -1321,9 +1439,8 @@ struct Appearance: View {
             Section {
                 Toggle("Always show tabs", isOn: $coordinator.alwaysShowTabs)
                 Defaults.Toggle(key: .settingsIconInNotch) {
-                    Text("Show settings icon in notch")
+                    Text("Show Settings button in island")
                 }
-
             } header: {
                 Text("General")
             }
@@ -1385,23 +1502,31 @@ struct Appearance: View {
             Section {
                 List {
                     ForEach(customVisualizers, id: \.self) { visualizer in
-                        HStack {
-                            LottieView(
-                                url: visualizer.url, speed: visualizer.speed,
-                                loopMode: .loop
-                            )
-                            .frame(width: 30, height: 30, alignment: .center)
-                            Text(visualizer.name)
-                            Spacer(minLength: 0)
-                            if selectedVisualizer == visualizer {
-                                Text("selected")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.trailing, 8)
+                        Button {
+                            if selectedListVisualizer == visualizer {
+                                selectedListVisualizer = nil
+                            } else {
+                                selectedListVisualizer = visualizer
+                            }
+                        } label: {
+                            HStack {
+                                LottieView(
+                                    url: visualizer.url, speed: visualizer.speed,
+                                    loopMode: .loop
+                                )
+                                .frame(width: 30, height: 30, alignment: .center)
+                                Text(visualizer.name)
+                                Spacer(minLength: 0)
+                                if selectedVisualizer == visualizer {
+                                    Text("selected")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.trailing, 8)
+                                }
                             }
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .buttonStyle(.plain)
                         .padding(.vertical, 2)
                         .background(
                             selectedListVisualizer != nil
@@ -1410,13 +1535,9 @@ struct Appearance: View {
                             in: RoundedRectangle(cornerRadius: 5)
                         )
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            if selectedListVisualizer == visualizer {
-                                selectedListVisualizer = nil
-                                return
-                            }
-                            selectedListVisualizer = visualizer
-                        }
+                        .accessibilityLabel(visualizer.name)
+                        .accessibilityValue(selectedListVisualizer == visualizer ? "Selected" : "Not selected")
+                        .accessibilityHint("Selects this custom visualizer")
                     }
                 }
                 .safeAreaPadding(
@@ -1435,6 +1556,8 @@ struct Appearance: View {
                                 .foregroundStyle(.secondary)
                                 .contentShape(Rectangle())
                         }
+                        .accessibilityLabel("Add custom visualizer")
+                        .accessibilityHint("Opens a form for a Lottie animation URL")
                         Divider()
                         Button {
                             if selectedListVisualizer != nil {
@@ -1451,6 +1574,9 @@ struct Appearance: View {
                                 .foregroundStyle(.secondary)
                                 .contentShape(Rectangle())
                         }
+                        .disabled(selectedListVisualizer == nil)
+                        .accessibilityLabel("Remove selected custom visualizer")
+                        .accessibilityHint("Removes the selected animation")
                     }
                 }
                 .controlSize(.small)
@@ -1487,10 +1613,11 @@ struct Appearance: View {
                             }
 
                             Button {
+                                guard let visualizerURL = URL(string: url) else { return }
                                 let visualizer: CustomVisualizer = .init(
                                     UUID: UUID(),
-                                    name: name,
-                                    url: URL(string: url)!,
+                                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    url: visualizerURL,
                                     speed: speed
                                 )
 
@@ -1504,6 +1631,7 @@ struct Appearance: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                             }
                             .buttonStyle(BorderedProminentButtonStyle())
+                            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || URL(string: url) == nil)
                         }
                     }
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -1556,34 +1684,28 @@ struct Appearance: View {
 private struct ThemePreview: View {
     let theme: IslandTheme
 
-    private var surface: Color {
-        switch theme {
-        case .midnight: Color(red: 16 / 255, green: 17 / 255, blue: 20 / 255)
-        case .graphite: Color(red: 31 / 255, green: 32 / 255, blue: 35 / 255)
-        case .frost: Color(red: 39 / 255, green: 43 / 255, blue: 50 / 255)
-        case .contrast: .black
-        }
+    private var palette: IslandPalette {
+        Color.islandPalette(theme: theme)
     }
 
-    private var border: Color {
-        theme == .contrast ? .white.opacity(0.24) : .white.opacity(0.10)
-    }
+    private var surface: Color { palette.surface }
+    private var border: Color { palette.border }
 
     var body: some View {
         HStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.white.opacity(0.10))
+                .fill(palette.elevatedSurface)
                 .frame(width: 34, height: 34)
-                .overlay(Image(systemName: "music.note").foregroundStyle(.white.opacity(0.72)))
+                .overlay(Image(systemName: "music.note").foregroundStyle(palette.primaryText))
             VStack(alignment: .leading, spacing: 3) {
                 Text("MacIsland")
-                    .font(.subheadline.weight(.semibold))
+                    .font(IslandTypography.title)
                 Text("Focused, native, and calm")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.58))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(palette.secondaryText)
             }
             Spacer()
-            Circle().fill(Color.effectiveAccent).frame(width: 8, height: 8)
+            Circle().fill(Color.islandFocus).frame(width: 8, height: 8)
         }
         .padding(12)
         .background(surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1649,7 +1771,8 @@ struct Advanced: View {
                                 AccentCircleButton(
                                     isSelected: true,
                                     color: .accentColor,
-                                    isSystemDefault: true
+                                    isSystemDefault: true,
+                                    accessibilityName: "Use macOS system accent color"
                                 ) {}
                                 
                                 VStack(alignment: .leading, spacing: 2) {
@@ -1675,7 +1798,7 @@ struct Advanced: View {
                                     AccentCircleButton(
                                         isSelected: selectedPresetColor == preset,
                                         color: preset.color,
-                                        isMulticolor: false
+                                        accessibilityName: "Use \(preset.rawValue) accent color"
                                     ) {
                                         selectedPresetColor = preset
                                         customAccentColor = preset.color
@@ -1723,6 +1846,7 @@ struct Advanced: View {
                                     }
                                 }
                                 .labelsHidden()
+                                .accessibilityLabel("Custom accent color")
                             }
                         }
                     }
@@ -1872,7 +1996,7 @@ struct AccentCircleButton: View {
     let isSelected: Bool
     let color: Color
     var isSystemDefault: Bool = false
-    var isMulticolor: Bool = false
+    var accessibilityName: String = "Accent color"
     let action: () -> Void
     
     var body: some View {
@@ -1900,31 +2024,34 @@ struct AccentCircleButton: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .help(isSystemDefault ? "Use your macOS system accent color" : "")
     }
 }
 
-struct Shortcuts: View {
+private struct ShortcutSettingsSections: View {
     var body: some View {
-        Form {
-            Section {
-                KeyboardShortcuts.Recorder("Toggle Sneak Peek:", name: .toggleSneakPeek)
-            } header: {
-                Text("Media")
-            } footer: {
-                Text(
-                    "Sneak Peek shows the media title and artist under the notch for a few seconds."
-                )
-                .multilineTextAlignment(.trailing)
-                .foregroundStyle(.secondary)
-                .font(.caption)
-            }
-            Section {
-                KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
-            }
+        Section {
+            KeyboardShortcuts.Recorder("Toggle Sneak Peek:", name: .toggleSneakPeek)
+        } header: {
+            Text("Media shortcut")
+        } footer: {
+            Text("Sneak Peek shows the media title and artist under the notch for a few seconds.")
         }
-        .accentColor(.effectiveAccent)
-        .navigationTitle("Shortcuts")
+        Section {
+            KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
+        } header: {
+            Text("MacIsland shortcut")
+        }
+        Section {
+            KeyboardShortcuts.Recorder("Show Snippets:", name: .clipboardHistoryPanel)
+        } header: {
+            Text("Snippets shortcut")
+        } footer: {
+            Text("Shows locally stored snippets. Copy still requires an explicit action in MacIsland.")
+        }
     }
 }
 

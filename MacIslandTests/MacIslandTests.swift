@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Combine
 import Defaults
+import EventKit
 import XCTest
 @testable import MacIsland
 
@@ -18,6 +19,126 @@ final class MacIslandTests: XCTestCase {
         viewModel.destroy()
     }
 
+    func testClosedActivitiesAreVisibleBeforeFullscreenDetectionPublishes() {
+        let viewModel = BoringViewModel()
+        defer { viewModel.destroy() }
+
+        XCTAssertFalse(viewModel.hideOnClosed)
+    }
+
+    func testSystemStatePresentationUsesPrivateLabelsAndPublicReachabilityCopy() {
+        let originalName = Defaults[.focusIndicatorName]
+        defer { Defaults[.focusIndicatorName] = originalName }
+
+        Defaults[.focusIndicatorName] = "  Deep work  "
+        XCTAssertEqual(SystemStatePresentation.title(for: .focus, value: 1), "Deep work")
+        XCTAssertEqual(SystemStatePresentation.detail(for: .focus, value: 0), "Focus ended")
+        XCTAssertEqual(SystemStatePresentation.title(for: .connectivity, value: 1), "Connected")
+        XCTAssertEqual(SystemStatePresentation.detail(for: .connectivity, value: 0), "No internet connection")
+        XCTAssertFalse(SneakContentType.focus.requiresHUDReplacement)
+        XCTAssertFalse(SneakContentType.connectivity.requiresHUDReplacement)
+        XCTAssertTrue(SneakContentType.volume.requiresHUDReplacement)
+    }
+
+    func testLockScreenCollapsesTheIslandAndPreventsReopen() {
+        let viewModel = BoringViewModel()
+        defer { viewModel.destroy() }
+
+        viewModel.open()
+        viewModel.setScreenLocked(true)
+        XCTAssertTrue(viewModel.isScreenLocked)
+        XCTAssertEqual(viewModel.notchState, .closed)
+
+        viewModel.open()
+        XCTAssertEqual(viewModel.notchState, .closed)
+
+        let scene = IslandSceneResolver.resolve(IslandSceneInput(
+            isOnboarding: true,
+            isOpen: true,
+            currentView: .shelf,
+            isBatteryActivityVisible: true,
+            isSystemHUDVisible: true,
+            isTimerVisible: true,
+            isTimerCompleted: true,
+            isMediaVisible: true,
+            isIdleFaceVisible: true,
+            isScreenLocked: true
+        ))
+        XCTAssertEqual(scene, .collapsed)
+    }
+
+    func testSettingsNavigationUsesTheFiveAuditedGroups() {
+        XCTAssertEqual(
+            SettingsNavigationGroup.allCases.map(\.rawValue),
+            ["Appearance", "Behavior", "Gestures", "Modules", "Advanced"]
+        )
+        XCTAssertEqual(SettingsNavigationGroup.appearance.destinations, [.appearance])
+        XCTAssertEqual(SettingsNavigationGroup.behavior.destinations, [.behavior])
+        XCTAssertEqual(SettingsNavigationGroup.gestures.destinations, [.gestures])
+        XCTAssertEqual(
+            SettingsNavigationGroup.modules.destinations,
+            [.media, .calendar, .timer, .weather, .hud, .battery, .systemStates, .shelf]
+        )
+        XCTAssertEqual(SettingsNavigationGroup.advanced.destinations, [.advanced, .about])
+        XCTAssertEqual(SettingsDestination.gestures.title, "Controls & shortcuts")
+        XCTAssertTrue(GestureSettingsPolicy.trackpadControlsAvailable(hoverOpenEnabled: false))
+        XCTAssertFalse(GestureSettingsPolicy.trackpadControlsAvailable(hoverOpenEnabled: true))
+    }
+
+    func testReduceMotionPolicyStopsNonessentialVisualWork() {
+        XCTAssertTrue(IslandMotion.allowsNonessentialMotion(reduceMotion: false))
+        XCTAssertFalse(IslandMotion.allowsNonessentialMotion(reduceMotion: true))
+
+        for phase in IslandMotionPhase.allCases {
+            XCTAssertLessThanOrEqual(
+                IslandMotion.durationBudget(for: phase, reduceMotion: false),
+                0.65,
+                "\\(phase) exceeds the island transition budget"
+            )
+            XCTAssertEqual(IslandMotion.durationBudget(for: phase, reduceMotion: true), 0.01)
+        }
+
+        let spectrum = AudioSpectrum(frame: .zero)
+        defer { spectrum.setPlaying(false) }
+
+        spectrum.setPlaying(true, reduceMotion: true)
+        XCTAssertFalse(spectrum.isAnimating)
+
+        spectrum.setPlaying(true, reduceMotion: false)
+        XCTAssertTrue(spectrum.isAnimating)
+    }
+
+    func testIdleFaceMotionStopsWhenHiddenOrReduceMotionIsEnabled() {
+        XCTAssertTrue(IdleFaceMotionPolicy.shouldAnimate(isVisible: true, reduceMotion: false))
+        XCTAssertFalse(IdleFaceMotionPolicy.shouldAnimate(isVisible: false, reduceMotion: false))
+        XCTAssertFalse(IdleFaceMotionPolicy.shouldAnimate(isVisible: true, reduceMotion: true))
+    }
+
+    func testIslandPaletteElevatesContrastForThemeAndSystemPreference() {
+        XCTAssertFalse(IslandPalette(theme: .midnight, increaseContrast: false).usesHighContrast)
+        XCTAssertTrue(IslandPalette(theme: .contrast, increaseContrast: false).usesHighContrast)
+        XCTAssertTrue(IslandPalette(theme: .graphite, increaseContrast: true).usesHighContrast)
+        XCTAssertEqual(IslandPalette(theme: .frost, increaseContrast: true).borderOpacity, 0.32)
+        XCTAssertEqual(IslandPalette(theme: .midnight, increaseContrast: false).moduleSurfaceOpacity, 0.065)
+        XCTAssertEqual(IslandPalette(theme: .midnight, increaseContrast: false).moduleBorderOpacity, 0.075)
+        XCTAssertEqual(IslandPalette(theme: .midnight, increaseContrast: false).ambientGlowOpacity, 0.24)
+        XCTAssertEqual(IslandPalette(theme: .contrast, increaseContrast: false).ambientGlowOpacity, 0)
+    }
+
+    func testFeatureSurfacesShareTheModuleAndCompactControlTokenScale() {
+        XCTAssertEqual(IslandStyle.modulePadding, 12)
+        XCTAssertEqual(IslandStyle.moduleCornerRadius, 18)
+        XCTAssertEqual(IslandStyle.hairlineWidth, 0.75)
+        XCTAssertEqual(IslandStyle.controlHeight, 30)
+        XCTAssertEqual(IslandStyle.headerControlHeight, 28)
+        XCTAssertEqual(IslandStyle.minimumHitTarget, 32)
+        XCTAssertEqual(IslandStyle.compactControlPadding, 8)
+        XCTAssertEqual(IslandStyle.compactControlCornerRadius, 8)
+        XCTAssertEqual(IslandStyle.compactControlSpacing, 8)
+        XCTAssertEqual(IslandStyle.homeModuleSpacing, 8)
+        XCTAssertEqual(IslandStyle.homeSectionSpacing, 8)
+    }
+
     func testGeometryStaysWithinTheActiveDisplay() {
         guard let screen = NSScreen.main else {
             return XCTFail("A macOS test host must have a main screen")
@@ -28,6 +149,203 @@ final class MacIslandTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(metrics.closedIslandSize.height, 0)
         XCTAssertLessThanOrEqual(metrics.openIslandSize.width, screen.frame.width)
         XCTAssertLessThanOrEqual(metrics.openIslandSize.height, screen.visibleFrame.height)
+    }
+
+    func testPanelGeometryKeepsTheBaselineEnvelopeTopCenteredAcrossPageChanges() {
+        XCTAssertEqual(preferredOpenIslandSize, CGSize(width: 640, height: 190))
+        XCTAssertEqual(shadowPadding, 20)
+
+        let panel = IslandPanelGeometry(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+            panelSize: CGSize(width: 640, height: 210)
+        )
+        XCTAssertEqual(panel.frame, CGRect(x: 436, y: 772, width: 640, height: 210))
+
+        // A narrow display may constrain the panel, but it remains centered
+        // and attached to the display's top edge rather than a page's height.
+        let constrained = IslandPanelGeometry(
+            screenFrame: CGRect(x: 100, y: 50, width: 320, height: 240),
+            panelSize: CGSize(width: 640, height: 210)
+        )
+        XCTAssertEqual(constrained.frame, CGRect(x: 100, y: 80, width: 320, height: 210))
+    }
+
+    func testNotchMetricsCoverNotchedNotchlessAndNarrowDisplays() {
+        let originalNotchMode = Defaults[.notchHeightMode]
+        let originalNonNotchMode = Defaults[.nonNotchHeightMode]
+        defer {
+            Defaults[.notchHeightMode] = originalNotchMode
+            Defaults[.nonNotchHeightMode] = originalNonNotchMode
+        }
+
+        Defaults[.notchHeightMode] = .matchRealNotchSize
+        let notched = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_512, height: 950),
+            safeAreaTop: 32,
+            auxiliaryTopLeftWidth: 654,
+            auxiliaryTopRightWidth: 654
+        ))
+        XCTAssertTrue(notched.hasPhysicalNotch)
+        XCTAssertEqual(notched.physicalNotchSize, CGSize(width: 208, height: 32))
+        XCTAssertEqual(notched.closedIslandSize, notched.physicalNotchSize)
+
+        // 15-inch MacBook Air target supplied for the visual brief:
+        // 2880 x 1864 physical pixels at 2x, with a 176 x 32-point notch
+        // exclusion and a 1440 x 900-point uninterrupted safe canvas.
+        let targetAir = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 932),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            safeAreaTop: 32,
+            auxiliaryTopLeftWidth: 632,
+            auxiliaryTopRightWidth: 632
+        ))
+        XCTAssertTrue(targetAir.hasPhysicalNotch)
+        XCTAssertEqual(targetAir.physicalNotchSize, CGSize(width: 180, height: 32))
+        XCTAssertEqual(targetAir.openIslandSize, preferredOpenIslandSize)
+        XCTAssertEqual(targetAir.panelSize, CGSize(width: 640, height: 210))
+
+        Defaults[.nonNotchHeightMode] = .matchMenuBar
+        let notchless = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_056),
+            safeAreaTop: 0,
+            auxiliaryTopLeftWidth: 0,
+            auxiliaryTopRightWidth: 0
+        ))
+        XCTAssertFalse(notchless.hasPhysicalNotch)
+        XCTAssertTrue(notchless.usesSyntheticIsland)
+        XCTAssertEqual(notchless.physicalNotchSize, .zero)
+        XCTAssertEqual(notchless.closedIslandSize, CGSize(width: 160, height: 24))
+        XCTAssertEqual(notchless.closedSurfaceSize, CGSize(width: 168, height: 24))
+
+        // `matchRealNotchSize` existed in older defaults but has no sensible
+        // meaning without a camera housing. It must remain a usable synthetic
+        // island rather than falling back to an arbitrary custom value.
+        Defaults[.nonNotchHeightMode] = .matchRealNotchSize
+        let legacyNotchless = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_056),
+            safeAreaTop: 0,
+            auxiliaryTopLeftWidth: 0,
+            auxiliaryTopRightWidth: 0
+        ))
+        XCTAssertTrue(legacyNotchless.usesSyntheticIsland)
+        XCTAssertEqual(legacyNotchless.closedIslandSize, CGSize(width: 160, height: 24))
+
+        let narrow = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 320, height: 240),
+            visibleFrame: CGRect(x: 0, y: 0, width: 320, height: 216),
+            safeAreaTop: 0,
+            auxiliaryTopLeftWidth: 0,
+            auxiliaryTopRightWidth: 0
+        ))
+        XCTAssertLessThanOrEqual(narrow.openIslandSize.width, 304)
+        XCTAssertLessThanOrEqual(narrow.openIslandSize.height, 192)
+    }
+
+    func testClosedBridgeAndHoverTargetStayOutsideThePhysicalCameraGeometry() {
+        let originalHoverSetting = Defaults[.extendHoverArea]
+        defer { Defaults[.extendHoverArea] = originalHoverSetting }
+
+        let metrics = NotchMetrics(input: NotchMetricsInput(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_512, height: 950),
+            safeAreaTop: 32,
+            auxiliaryTopLeftWidth: 654,
+            auxiliaryTopRightWidth: 654
+        ))
+
+        XCTAssertEqual(metrics.physicalNotchSize, CGSize(width: 208, height: 32))
+        XCTAssertEqual(metrics.closedSurfaceSize, CGSize(width: 216, height: 32))
+        XCTAssertEqual(metrics.hoverHitFrame, CGRect(x: 648, y: 950, width: 216, height: 32))
+
+        Defaults[.extendHoverArea] = true
+        XCTAssertEqual(metrics.hoverHitFrame, CGRect(x: 618, y: 920, width: 276, height: 62))
+        XCTAssertTrue(metrics.containsHoverPoint(CGPoint(x: 630, y: 930)))
+        XCTAssertFalse(metrics.containsHoverPoint(CGPoint(x: 617.9, y: 930)))
+        XCTAssertFalse(metrics.containsHoverPoint(CGPoint(x: 756, y: 982)))
+    }
+
+    func testClosedMediaActivityKeepsArtworkAndVisualizerOutsideTheHardwareBridge() {
+        let layout = ClosedMediaActivityGeometry(
+            physicalBridgeWidth: 208,
+            closedHeight: 32
+        )
+
+        XCTAssertEqual(layout.bridgeWidth, 208)
+        XCTAssertEqual(layout.wingWidth, 20)
+        XCTAssertEqual(layout.totalWidth, 248)
+        XCTAssertEqual(
+            layout.totalWidth + cornerRadiusInsets.closed.bottom * 2,
+            276
+        )
+    }
+
+    func testHomeLayoutBudgetKeepsMediaPrimaryAndBoundsOptionalModules() {
+        XCTAssertEqual(
+            IslandStyle.homeContentSize(
+                openIslandSize: CGSize(width: 600, height: 300),
+                headerHeight: 32
+            ),
+            CGSize(width: 538, height: 256)
+        )
+
+        let openIsland = CGSize(width: 640, height: 190)
+        let expandedPage = IslandStyle.expandedPageSize(
+            openIslandSize: openIsland,
+            headerHeight: 32
+        )
+        let homeContent = IslandStyle.homeContentSize(
+            openIslandSize: openIsland,
+            headerHeight: 32
+        )
+        XCTAssertEqual(expandedPage, CGSize(width: 578, height: 146))
+        XCTAssertEqual(homeContent, expandedPage)
+        XCTAssertEqual(
+            32 + homeContent.height + IslandStyle.homeTopInset
+                + IslandStyle.homeBottomInset + IslandStyle.openSurfacePadding,
+            openIsland.height
+        )
+
+        let full = HomeLayoutBudget(
+            availableSize: CGSize(width: 592, height: 140),
+            wantsCalendar: true,
+            wantsCamera: true,
+            showsWeather: false
+        )
+        XCTAssertEqual(full.mediaWidth, 282)
+        XCTAssertEqual(full.calendarWidth, 178)
+        XCTAssertEqual(full.cameraSize, CGSize(width: 112, height: 112))
+        XCTAssertLessThanOrEqual(full.mediaWidth + full.occupiedWidth, full.availableSize.width)
+
+        let weather = HomeLayoutBudget(
+            availableSize: CGSize(width: 592, height: 140),
+            wantsCalendar: true,
+            wantsCamera: true,
+            showsWeather: true
+        )
+        XCTAssertEqual(weather.moduleHeight, 108)
+        XCTAssertEqual(weather.cameraSize, CGSize(width: 112, height: 108))
+
+        let narrow = HomeLayoutBudget(
+            availableSize: CGSize(width: 296, height: 140),
+            wantsCalendar: true,
+            wantsCamera: true,
+            showsWeather: false
+        )
+        XCTAssertEqual(narrow.mediaWidth, 296)
+        XCTAssertNil(narrow.calendarWidth)
+        XCTAssertNil(narrow.cameraSize)
+
+        let short = HomeLayoutBudget(
+            availableSize: CGSize(width: 592, height: 80),
+            wantsCalendar: true,
+            wantsCamera: true,
+            showsWeather: false
+        )
+        XCTAssertEqual(short.calendarWidth, 215)
+        XCTAssertNil(short.cameraSize)
     }
 
     func testDragStateCombinesAllDropTargets() {
@@ -73,6 +391,84 @@ final class MacIslandTests: XCTestCase {
         XCTAssertFalse(camera.isSessionRunning)
     }
 
+    func testDeniedCalendarAndCameraPoliciesKeepProtectedContentUnavailable() {
+        XCTAssertFalse(CalendarAccessPolicy.hasReadAccess(.denied))
+        XCTAssertFalse(CalendarAccessPolicy.hasReadAccess(.restricted))
+        XCTAssertTrue(CalendarAccessPolicy.shouldClearEvents(
+            calendarStatus: .denied,
+            reminderStatus: .restricted
+        ))
+        XCTAssertFalse(CalendarAccessPolicy.shouldClearEvents(
+            calendarStatus: .fullAccess,
+            reminderStatus: .denied
+        ))
+
+        XCTAssertFalse(CameraPreviewPolicy.canStart(
+            authorizationStatus: .denied,
+            cameraAvailable: true
+        ))
+        XCTAssertFalse(CameraPreviewPolicy.canStart(
+            authorizationStatus: .authorized,
+            cameraAvailable: false
+        ))
+        XCTAssertTrue(CameraPreviewPolicy.canStart(
+            authorizationStatus: .authorized,
+            cameraAvailable: true
+        ))
+    }
+
+    func testUnavailableXPCServiceFailsClosed() async {
+        let client = XPCHelperClient(serviceName: "com.macisland.tests.unavailable.\(UUID().uuidString)")
+
+        let authorized = await client.isAccessibilityAuthorized()
+        XCTAssertFalse(authorized)
+        XCTAssertEqual(client.connectionState, .unavailable)
+        XCTAssertFalse(client.accessibilityAuthorized)
+    }
+
+    func testManualLocationLookupRejectsEmptyAndDeniedResponses() async {
+        let emptyResults: WeatherDataLoader = { url in
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data(#"{"results":[]}"#.utf8), response)
+        }
+        let denied: WeatherDataLoader = { _ in throw URLError(.userAuthenticationRequired) }
+
+        do {
+            _ = try await BoringViewCoordinator.resolveWeatherLocation(named: "Nowhere", dataLoader: emptyResults)
+            XCTFail("Expected an empty manual-location response to fail")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .cannotFindHost)
+        }
+        do {
+            _ = try await BoringViewCoordinator.resolveWeatherLocation(named: "Austin", dataLoader: denied)
+            XCTFail("Expected a denied manual-location response to fail")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .userAuthenticationRequired)
+        }
+    }
+
+    func testDisplayRemovalAndSleepWakePoliciesFailSafe() {
+        XCTAssertEqual(
+            AppLifecyclePolicy.detachedDisplayIdentifiers(
+                existing: ["built-in", "external"],
+                current: ["built-in"]
+            ),
+            ["external"]
+        )
+        XCTAssertFalse(AppLifecyclePolicy.shouldMonitorDragDetection(enabled: true, isScreenLocked: true))
+        XCTAssertFalse(AppLifecyclePolicy.shouldMonitorDragDetection(enabled: false, isScreenLocked: false))
+        XCTAssertTrue(AppLifecyclePolicy.shouldMonitorDragDetection(enabled: true, isScreenLocked: false))
+        XCTAssertFalse(AppLifecyclePolicy.shouldResumeCameraAfterWake(isMirrorExpanded: false))
+        XCTAssertTrue(AppLifecyclePolicy.shouldResumeCameraAfterWake(isMirrorExpanded: true))
+
+        let viewModel = BoringViewModel()
+        defer { viewModel.destroy() }
+        viewModel.setScreenLocked(true)
+        viewModel.setScreenLocked(false)
+        viewModel.open()
+        XCTAssertEqual(viewModel.notchState, .open)
+    }
+
     func testCountdownTimerSupportsPauseResumeAndStop() {
         let coordinator = BoringViewCoordinator.shared
         defer { coordinator.stopTimer() }
@@ -92,6 +488,25 @@ final class MacIslandTests: XCTestCase {
         XCTAssertEqual(coordinator.timerRemaining, 0)
     }
 
+    func testCountdownCompletionPersistsUntilDismissed() async throws {
+        let coordinator = BoringViewCoordinator.shared
+        let originalNotifications = Defaults[.timerCompletionNotifications]
+        Defaults[.timerCompletionNotifications] = false
+        defer {
+            Defaults[.timerCompletionNotifications] = originalNotifications
+            coordinator.stopTimer()
+        }
+
+        coordinator.startTimer(seconds: 1)
+        try await Task.sleep(for: .milliseconds(1_250))
+
+        XCTAssertEqual(coordinator.timerStatus, .completed)
+        XCTAssertEqual(coordinator.timerRemaining, 0)
+
+        coordinator.stopTimer()
+        XCTAssertEqual(coordinator.timerStatus, .idle)
+    }
+
     func testPersistedCountdownRecoveryHonorsElapsedAndPausedTime() {
         let now = Date(timeIntervalSinceReferenceDate: 1_000)
         let running = PersistedCountdownTimer.running(until: now.addingTimeInterval(90))
@@ -100,6 +515,9 @@ final class MacIslandTests: XCTestCase {
 
         let paused = PersistedCountdownTimer.paused(remaining: 45)
         XCTAssertEqual(paused.remaining(at: now.addingTimeInterval(10_000)), 45)
+
+        let encoded = try? JSONEncoder().encode(paused)
+        XCTAssertEqual(encoded.flatMap { try? JSONDecoder().decode(PersistedCountdownTimer.self, from: $0) }, paused)
     }
 
     func testTimerNotificationUsesStableIdentifierAndNativeContent() {
@@ -107,6 +525,9 @@ final class MacIslandTests: XCTestCase {
         XCTAssertEqual(TimerCompletionNotification.identifier, "macisland.countdown-complete")
         XCTAssertEqual(content.title, "Timer finished")
         XCTAssertEqual(content.sound, .default)
+        XCTAssertTrue(TimerCompletionNotification.presentationOptions.contains(.banner))
+        XCTAssertTrue(TimerCompletionNotification.presentationOptions.contains(.list))
+        XCTAssertTrue(TimerCompletionNotification.presentationOptions.contains(.sound))
     }
 
     func testTimerPresetNormalizesNameAndDuration() {
@@ -145,6 +566,35 @@ final class MacIslandTests: XCTestCase {
 
         XCTAssertEqual(snapshot.formattedTemperature(in: .celsius), "20°C")
         XCTAssertEqual(snapshot.formattedTemperature(in: .fahrenheit), "68°F")
+    }
+
+    func testWeatherCacheUsesOnlyTheCurrentCityWithinItsLifetime() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let snapshot = WeatherSnapshot(
+            location: " Austin ",
+            temperatureCelsius: 20,
+            weatherCode: 0,
+            updatedAt: now.addingTimeInterval(-60)
+        )
+
+        XCTAssertTrue(BoringViewCoordinator.isWeatherCacheFresh(
+            snapshot,
+            for: "austin",
+            now: now,
+            lifetime: 15 * 60
+        ))
+        XCTAssertFalse(BoringViewCoordinator.isWeatherCacheFresh(
+            snapshot,
+            for: "Chicago",
+            now: now,
+            lifetime: 15 * 60
+        ))
+        XCTAssertFalse(BoringViewCoordinator.isWeatherCacheFresh(
+            snapshot,
+            for: "Austin",
+            now: now.addingTimeInterval(15 * 60),
+            lifetime: 15 * 60
+        ))
     }
 
     func testWeatherNetworkSeamsDecodeOpenMeteoResponses() async throws {
@@ -206,6 +656,99 @@ final class MacIslandTests: XCTestCase {
         XCTAssertEqual(coordinator.expandingView.type, .battery)
     }
 
+    func testActivityCoordinatorReplaysSuppressedWorkAfterPriorityHandoff() {
+        let coordinator = BoringViewCoordinator.shared
+        defer {
+            coordinator.toggleSneakPeek(status: false, type: .music)
+            coordinator.toggleExpandingView(status: false, type: .battery)
+        }
+
+        coordinator.toggleSneakPeek(status: true, type: .music, duration: 60)
+        coordinator.toggleExpandingView(status: true, type: .download)
+        XCTAssertTrue(coordinator.expandingView.show)
+        XCTAssertEqual(coordinator.expandingView.type, .download)
+        XCTAssertFalse(coordinator.sneakPeek.show)
+
+        // Music is blocked by Download and queued. Battery preempts Download;
+        // the queued music must not flash during the handoff.
+        coordinator.toggleSneakPeek(status: true, type: .music, duration: 60)
+        coordinator.toggleExpandingView(status: true, type: .battery)
+        XCTAssertTrue(coordinator.expandingView.show)
+        XCTAssertEqual(coordinator.expandingView.type, .battery)
+        XCTAssertFalse(coordinator.sneakPeek.show)
+
+        coordinator.toggleExpandingView(status: false, type: .battery)
+        XCTAssertTrue(coordinator.sneakPeek.show)
+        XCTAssertEqual(coordinator.sneakPeek.type, .music)
+    }
+
+    func testIslandSceneResolverKeepsUserAndCriticalActivityPriority() {
+        let allVisible = IslandSceneInput(
+            isOnboarding: false,
+            isOpen: false,
+            currentView: .home,
+            isBatteryActivityVisible: true,
+            isSystemHUDVisible: true,
+            isTimerVisible: true,
+            isTimerCompleted: true,
+            isMediaVisible: true,
+            isIdleFaceVisible: true
+        )
+        XCTAssertEqual(IslandSceneResolver.resolve(allVisible), .battery)
+
+        let openShelf = IslandSceneInput(
+            isOnboarding: false,
+            isOpen: true,
+            currentView: .shelf,
+            isBatteryActivityVisible: true,
+            isSystemHUDVisible: true,
+            isTimerVisible: true,
+            isTimerCompleted: true,
+            isMediaVisible: true,
+            isIdleFaceVisible: true
+        )
+        XCTAssertEqual(IslandSceneResolver.resolve(openShelf), .shelf)
+
+        let timerOverMedia = IslandSceneInput(
+            isOnboarding: false,
+            isOpen: false,
+            currentView: .home,
+            isBatteryActivityVisible: false,
+            isSystemHUDVisible: false,
+            isTimerVisible: true,
+            isTimerCompleted: false,
+            isMediaVisible: true,
+            isIdleFaceVisible: true
+        )
+        XCTAssertEqual(IslandSceneResolver.resolve(timerOverMedia), .timer)
+
+        let completedTimerOverHUD = IslandSceneInput(
+            isOnboarding: false,
+            isOpen: false,
+            currentView: .home,
+            isBatteryActivityVisible: false,
+            isSystemHUDVisible: true,
+            isTimerVisible: true,
+            isTimerCompleted: true,
+            isMediaVisible: true,
+            isIdleFaceVisible: true
+        )
+        XCTAssertEqual(IslandSceneResolver.resolve(completedTimerOverHUD), .timer)
+
+        let activeTimerOverHUD = IslandSceneInput(
+            isOnboarding: false,
+            isOpen: false,
+            currentView: .home,
+            isBatteryActivityVisible: false,
+            isSystemHUDVisible: true,
+            isTimerVisible: true,
+            isTimerCompleted: false,
+            isMediaVisible: true,
+            isIdleFaceVisible: true
+        )
+        XCTAssertEqual(IslandSceneResolver.resolve(activeTimerOverHUD), .systemHUD)
+    }
+
     func testClipboardHistoryIsOptInAndDeduplicated() {
         let originalEnabled = Defaults[.clipboardHistoryEnabled]
         let originalLimit = Defaults[.clipboardHistoryLimit]
@@ -249,6 +792,36 @@ final class MacIslandTests: XCTestCase {
         ))
     }
 
+    func testCopyClipboardEntryWritesPlainTextWithoutCapturingIt() {
+        let coordinator = BoringViewCoordinator.shared
+        let originalEnabled = Defaults[.clipboardHistoryEnabled]
+        Defaults[.clipboardHistoryEnabled] = true
+        defer {
+            coordinator.clearClipboardHistory()
+            Defaults[.clipboardHistoryEnabled] = originalEnabled
+        }
+
+        coordinator.clearClipboardHistory()
+        coordinator.copyClipboardEntry(ClipboardEntry(text: "copy this snippet"))
+
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "copy this snippet")
+        XCTAssertTrue(coordinator.clipboardEntries.isEmpty)
+    }
+
+    func testClipboardSearchTrimsAndMatchesCaseInsensitively() {
+        let entries = [
+            ClipboardEntry(text: "MacIsland visual proof"),
+            ClipboardEntry(text: "Unrelated text"),
+            ClipboardEntry(text: "macisland release notes"),
+        ]
+
+        XCTAssertEqual(
+            BoringViewCoordinator.matchingClipboardEntries(entries, query: "  MACISLAND  ").map(\.text),
+            ["MacIsland visual proof", "macisland release notes"]
+        )
+        XCTAssertEqual(BoringViewCoordinator.matchingClipboardEntries(entries, query: " "), entries)
+    }
+
     func testShelfSelectionKeyboardNavigationClampsAtEnds() {
         let first = ShelfItem(kind: .text(string: "one"))
         let second = ShelfItem(kind: .text(string: "two"))
@@ -263,6 +836,62 @@ final class MacIslandTests: XCTestCase {
         XCTAssertTrue(selection.isSelected(second.id))
         selection.moveSelection(by: -1, in: [first, second])
         XCTAssertTrue(selection.isSelected(first.id))
+    }
+
+    func testSharingInteractionPolicyKeepsIslandContextAcrossNativeHandoffs() {
+        XCTAssertTrue(SharingInteractionPolicy.shouldTransferFilePickerLease(
+            response: .OK,
+            selectedItemCount: 1
+        ))
+        XCTAssertFalse(SharingInteractionPolicy.shouldTransferFilePickerLease(
+            response: .cancel,
+            selectedItemCount: 1
+        ))
+        XCTAssertFalse(SharingInteractionPolicy.shouldTransferFilePickerLease(
+            response: .OK,
+            selectedItemCount: 0
+        ))
+        XCTAssertTrue(SharingInteractionPolicy.canPresentSystemPicker(from: NSView()))
+        XCTAssertFalse(SharingInteractionPolicy.canPresentSystemPicker(from: nil))
+    }
+
+    func testQuickLookKeepsRegularFileURLsWithoutSecurityScope() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macisland-quick-look-\(UUID().uuidString).txt")
+        try Data("Shelf preview".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let service = QuickLookService()
+        service.show(urls: [url])
+
+        XCTAssertEqual(service.urls, [url])
+        XCTAssertEqual(service.selectedURL, url)
+        XCTAssertTrue(service.isQuickLookOpen)
+
+        service.hide()
+        XCTAssertFalse(service.isQuickLookOpen)
+    }
+
+    func testTemporaryFileNamesCannotEscapeTheirGeneratedDirectory() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macisland-temp-name-test", isDirectory: true)
+
+        let traversal = TemporaryFileStorageService.safeChildURL(
+            in: directory,
+            suggestedName: "../../audit-target",
+            fallbackName: "item.dat"
+        )
+        XCTAssertEqual(traversal.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
+        XCTAssertEqual(traversal.lastPathComponent, "audit-target")
+
+        XCTAssertEqual(
+            TemporaryFileStorageService.safeFilename("..", fallbackName: "item.dat"),
+            "item.dat"
+        )
+        XCTAssertEqual(
+            TemporaryFileStorageService.safeFilename("report/\\0?.txt", fallbackName: "item.dat"),
+            "0_.txt"
+        )
     }
 }
 

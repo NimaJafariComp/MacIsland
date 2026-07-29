@@ -16,14 +16,14 @@ struct BoringLargeButtons: View {
             action:action,
             label: {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12.0).fill(.black).frame(width: 70, height: 70)
+                    RoundedRectangle(cornerRadius: 12.0).fill(Color.islandElevatedSurface).frame(width: 70, height: 70)
                     VStack(spacing: 8) {
                         icon.resizable()
                             .aspectRatio(contentMode: .fit).frame(width:20)
                         Text(title).font(.body)
                     }
                 }
-            }).buttonStyle(PlainButtonStyle()).shadow(color: .black.opacity(0.5), radius: 10)
+            }).buttonStyle(PlainButtonStyle()).shadow(color: IslandStyle.panelShadow, radius: 10)
     }
 }
 
@@ -59,7 +59,7 @@ struct BoringExtrasMenu : View {
             }
         }) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12.0).fill(.black).frame(width: 70, height: 70)
+                RoundedRectangle(cornerRadius: 12.0).fill(Color.islandElevatedSurface).frame(width: 70, height: 70)
                 VStack(spacing: 8) {
                     Image(systemName: "gear").resizable()
                         .aspectRatio(contentMode: .fit).frame(width:20)
@@ -67,7 +67,7 @@ struct BoringExtrasMenu : View {
                 }
             }
         }
-        .buttonStyle(PlainButtonStyle()).shadow(color: .black.opacity(0.5), radius: 10)
+        .buttonStyle(PlainButtonStyle()).shadow(color: IslandStyle.panelShadow, radius: 10)
     }
     
     var hide: some View {

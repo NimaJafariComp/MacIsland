@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>display</key>
+    <dict>
+        <key>notch</key>
+        <string>notched</string>
+        <key>pixelHeight</key>
+        <integer>1964</integer>
+        <key>pixelWidth</key>
+        <integer>3024</integer>
+        <key>scale</key>
+        <integer>2</integer>
+    </dict>
+    <key>states</key>
+    <array>
+        <dict>
+            <key>image</key>
+            <string>../../2026-07-29-retina-2x/20260729-015915-closed.png</string>
+            <key>name</key>
+            <string>closed</string>
+            <key>sha256</key>
+            <string>132cfdcbabe8c590d5d6c4bf33c5d0c45d4fa104c575bd8c301a211e240b0b84</string>
+        </dict>
+        <dict>
+            <key>image</key>
+            <string>../../2026-07-29-retina-2x/20260729-015918-home.png</string>
+            <key>name</key>
+            <string>home</string>
+            <key>sha256</key>
+            <string>35a8dc8ec45cb6857ea67999f2bb449ae099e93b9652f58e5312cc85ad6adf2a</string>
+        </dict>
+        <dict>
+            <key>image</key>
+            <string>../../2026-07-29-retina-2x/20260729-011452-shelf.png</string>
+            <key>name</key>
+            <string>shelf</string>
+            <key>sha256</key>
+            <string>f028d9df8b742a72f51e93d9e64b71fd05a3485ae5c87712d6dfc92dfdd86e35</string>
+        </dict>
+        <dict>
+            <key>image</key>
+            <string>../../2026-07-29-retina-2x/20260729-014744-timer.png</string>
+            <key>name</key>
+            <string>timer</string>
+            <key>sha256</key>
+            <string>dfc0e7e7170f324b44b39ad0a8c9dcae07484e9c728f3c9d8500b1dd9ee75d87</string>
+        </dict>
+    </array>
+</dict>
+</plist>

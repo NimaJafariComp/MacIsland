@@ -16,7 +16,7 @@ struct EmptyStateView: View {
                 height: 70, width: 80)
             Text(message)
                 .font(.system(size:14))
-                .foregroundColor(.gray)
+                .foregroundColor(Color.islandSecondaryText)
         }
         .transition(.blurReplace.animation(IslandMotion.content))
     }

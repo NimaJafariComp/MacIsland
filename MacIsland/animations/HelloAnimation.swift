@@ -110,18 +110,24 @@ struct HelloAnimation: View {
             shape: { HelloShape() }
         )
         .task {
+            guard IslandMotion.allowsNonessentialMotion else {
+                onFinish()
+                return
+            }
+
             // Wait for the "opening" animation (notch expansion) to complete before starting the snake
             try? await Task.sleep(for: .seconds(0.6))
+            guard !Task.isCancelled else { return }
             
-            withAnimation(
-                .easeInOut(duration: 4.0)
-            ) {
+            withAnimation(IslandMotion.onboarding) {
                 progress = 1.0
             }
             
             // Wait for the animation to complete
-            try? await Task.sleep(for: .seconds(4.0))
-            
+            try? await Task.sleep(for: .seconds(
+                IslandMotion.durationBudget(for: .onboarding, reduceMotion: false)
+            ))
+            guard !Task.isCancelled else { return }
             onFinish()
         }
     }

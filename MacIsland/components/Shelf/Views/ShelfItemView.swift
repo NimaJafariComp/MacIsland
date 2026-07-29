@@ -105,7 +105,7 @@ struct ShelfItemView: View {
 
     private var textView: some View {
         Text(item.displayName)
-            .font(.system(size: 12, weight: .medium))
+            .font(IslandTypography.control)
             .foregroundStyle(Color.islandPrimaryText)
             .lineLimit(2)
             .truncationMode(.middle)
@@ -127,9 +127,9 @@ struct ShelfItemView: View {
 
     private var backgroundColor: Color {
         if debouncedDropTarget {
-            return Color.effectiveAccent.opacity(0.25)
+            return Color.islandFocus.opacity(0.25)
         } else if isSelected {
-            return Color.effectiveAccent.opacity(0.15)
+            return Color.islandPressedSurface
         } else {
             return Color.clear
         }
@@ -137,9 +137,9 @@ struct ShelfItemView: View {
 
     private var strokeColor: Color {
         if debouncedDropTarget {
-            return Color.effectiveAccent.opacity(0.9)
+            return Color.islandFocus.opacity(0.9)
         } else if isSelected {
-            return Color.effectiveAccent.opacity(0.8)
+            return Color.islandFocus.opacity(0.8)
         } else {
             return Color.clear
         }

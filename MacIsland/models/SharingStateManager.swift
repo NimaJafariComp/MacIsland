@@ -13,6 +13,21 @@ extension Notification.Name {
 	static let sharingDidFinish = Notification.Name("com.macisland.app.sharingDidFinish")
 }
 
+/// Keeps the nonactivating island present across native share handoffs without
+/// attempting to present an unanchored AppKit picker.
+enum SharingInteractionPolicy {
+	static func shouldTransferFilePickerLease(
+		response: NSApplication.ModalResponse,
+		selectedItemCount: Int
+	) -> Bool {
+		response == .OK && selectedItemCount > 0
+	}
+
+	static func canPresentSystemPicker(from view: NSView?) -> Bool {
+		view != nil
+	}
+}
+
 @MainActor
 final class SharingStateManager: ObservableObject {
 	static let shared = SharingStateManager()

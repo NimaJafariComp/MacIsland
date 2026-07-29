@@ -17,13 +17,6 @@ struct MusicPlayerView: View {
     @ObservedObject private var musicManager = MusicManager.shared
     let albumArtNamespace: Namespace.ID
 
-    /// A single active module should feel carved from the hardware island, not
-    /// like a card floating inside another card. Keep the card treatment only
-    /// when Calendar turns Home into a multi-module dashboard.
-    private var usesModuleChrome: Bool {
-        Defaults[.showCalendar]
-    }
-
     private var contextualBorder: Color {
         guard musicManager.isPlaying, Defaults[.playerColorTinting] else {
             return Color.islandBorder
@@ -48,17 +41,17 @@ struct MusicPlayerView: View {
                         .drawingGroup()
                         .compositingGroup()
                 }
-                .padding(12)
+                .padding(IslandStyle.modulePadding)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(usesModuleChrome ? Color.islandSurface : .clear)
+            RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+                .fill(Color.islandModuleSurface)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(usesModuleChrome ? contextualBorder : .clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+                .stroke(contextualBorder, lineWidth: IslandStyle.hairlineWidth)
         }
     }
 }
@@ -79,9 +72,10 @@ private struct MusicIdleView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Nothing Playing")
-                    .font(.headline)
+                    .font(IslandTypography.title)
+                    .foregroundStyle(Color.islandPrimaryText)
                 Text(musicManager.mediaFallbackMessage ?? "Start audio in Music, Spotify, or another supported app.")
-                    .font(.subheadline)
+                    .font(IslandTypography.body)
                     .foregroundStyle(Color.islandSecondaryText)
                     .lineLimit(2)
             }
@@ -144,7 +138,7 @@ struct AlbumArtView: View {
     private var albumArtDarkOverlay: some View {
         Rectangle()
             .aspectRatio(1, contentMode: .fit)
-            .foregroundColor(Color.black)
+            .foregroundColor(Color.islandHardwareSurface)
             .opacity(musicManager.isPlaying ? 0 : 0.8)
             .blur(radius: 50)
     }
@@ -210,7 +204,7 @@ struct MusicControlsView: View {
     private func songInfo(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             MarqueeText(
-                $musicManager.songTitle, font: .headline, nsFont: .headline, textColor: .white,
+                $musicManager.songTitle, font: IslandTypography.title, nsFont: .headline, textColor: Color.islandPrimaryText,
                 frameWidth: width)
             MarqueeText(
                 $musicManager.artistName,
@@ -218,7 +212,7 @@ struct MusicControlsView: View {
                 nsFont: .headline,
                 textColor: Defaults[.playerColorTinting]
                     ? Color(nsColor: musicManager.avgColor)
-                        .ensureMinimumBrightness(factor: 0.6) : .gray,
+                        .ensureMinimumBrightness(factor: 0.6) : Color.islandSecondaryText,
                 frameWidth: width
             )
             .fontWeight(.medium)
@@ -246,7 +240,7 @@ struct MusicControlsView: View {
                         .constant(line),
                         font: .subheadline,
                         nsFont: .subheadline,
-                        textColor: musicManager.isFetchingLyrics ? .gray.opacity(0.7) : .gray,
+                        textColor: musicManager.isFetchingLyrics ? Color.islandDisabledText : Color.islandSecondaryText,
                         frameWidth: width
                     )
                     .font(isPersian ? .custom("Vazirmatn-Regular", size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize) : .subheadline)
@@ -304,7 +298,7 @@ struct MusicControlsView: View {
     private func slotView(for slot: MusicControlButton) -> some View {
         switch slot {
         case .shuffle:
-            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .red : .primary, scale: .medium) {
+            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .islandCritical : .islandPrimaryText, scale: .medium) {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
@@ -354,9 +348,9 @@ struct MusicControlsView: View {
     private var repeatIconColor: Color {
         switch musicManager.repeatMode {
         case .off:
-            return .primary
+            return .islandPrimaryText
         case .all, .one:
-            return .red
+            return .islandCritical
         }
     }
 }
@@ -369,7 +363,6 @@ struct FavoriteControlButton: View {
             MusicManager.shared.toggleFavoriteTrack()
         }
         .disabled(!musicManager.canFavoriteTrack)
-        .opacity(musicManager.canFavoriteTrack ? 1 : 0.35)
     }
 
     private var iconName: String {
@@ -377,7 +370,8 @@ struct FavoriteControlButton: View {
     }
 
     private var iconColor: Color {
-        musicManager.isFavoriteTrack ? .red : .primary
+        guard musicManager.canFavoriteTrack else { return .islandDisabledText }
+        return musicManager.isFavoriteTrack ? .islandCritical : .islandPrimaryText
     }
 }
 
@@ -409,7 +403,7 @@ struct VolumeControlView: View {
             }) {
                 Image(systemName: volumeIcon)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(musicManager.volumeControlSupported ? .white : .gray)
+                    .foregroundColor(musicManager.volumeControlSupported ? Color.islandPrimaryText : Color.islandDisabledText)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(!musicManager.volumeControlSupported)
@@ -419,7 +413,7 @@ struct VolumeControlView: View {
                 CustomSlider(
                     value: $volumeSliderValue,
                     range: 0.0...1.0,
-                    color: .white,
+                    color: .islandPrimaryText,
                     dragging: $dragging,
                     lastDragged: .constant(Date.distantPast),
                     onValueChange: { newValue in
@@ -487,6 +481,7 @@ struct NotchHomeView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     let albumArtNamespace: Namespace.ID
+    let availableSize: CGSize
 
     var body: some View {
         Group {
@@ -496,57 +491,116 @@ struct NotchHomeView: View {
         }
         // simplified: use a straightforward opacity transition
         .transition(.opacity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var shouldShowCamera: Bool {
         Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
     }
 
-    private var musicMinimumWidth: CGFloat {
-        switch (Defaults[.showCalendar], shouldShowCamera) {
-        case (true, true): 250
-        case (true, false): 350
-        case (false, true): 460
-        case (false, false): 580
-        }
-    }
-
-    private var calendarWidth: CGFloat {
-        shouldShowCamera ? 178 : 215
+    private var layoutBudget: HomeLayoutBudget {
+        HomeLayoutBudget(
+            availableSize: availableSize,
+            wantsCalendar: Defaults[.showCalendar],
+            wantsCamera: shouldShowCamera,
+            showsWeather: Defaults[.weatherEnabled]
+        )
     }
 
     private var mainContent: some View {
-        VStack(spacing: 6) {
-            if Defaults[.weatherEnabled] {
-                HomeWeatherModule()
-            }
-            HStack(alignment: .top, spacing: 10) {
-                MusicPlayerView(albumArtNamespace: albumArtNamespace)
-                    .frame(minWidth: musicMinimumWidth, maxWidth: .infinity)
+        let budget = layoutBudget
 
-                if Defaults[.showCalendar] {
-                    HomeCalendarCard()
-                        .frame(width: calendarWidth)
-                        .onHover { isHovering in
-                            vm.isHoveringCalendar = isHovering
-                        }
-                        .environmentObject(vm)
-                        .transition(.opacity)
+        return ZStack(alignment: .top) {
+            HomeAmbientBackdrop()
+
+            VStack(spacing: IslandStyle.homeSectionSpacing) {
+                if Defaults[.weatherEnabled] {
+                    HomeWeatherModule()
+                        .frame(height: IslandStyle.homeWeatherHeight)
                 }
 
-                if shouldShowCamera {
-                    CameraPreviewView(webcamManager: webcamManager)
-                        .frame(width: 112, height: 132)
-                        .opacity(vm.notchState == .closed ? 0 : 1)
-                        .blur(radius: vm.notchState == .closed ? 20 : 0)
-                        .animation(IslandMotion.content, value: shouldShowCamera)
+                HStack(alignment: .top, spacing: IslandStyle.homeModuleSpacing) {
+                    MusicPlayerView(albumArtNamespace: albumArtNamespace)
+                        .frame(
+                            width: budget.mediaWidth,
+                            height: budget.moduleHeight,
+                            alignment: .leading
+                        )
+
+                    if let calendarWidth = budget.calendarWidth {
+                        HomeCalendarCard()
+                            .frame(width: calendarWidth, height: budget.moduleHeight)
+                            .onHover { isHovering in
+                                vm.isHoveringCalendar = isHovering
+                            }
+                            .environmentObject(vm)
+                            .transition(.opacity)
+                    }
+
+                    if let cameraSize = budget.cameraSize {
+                        CameraPreviewView(webcamManager: webcamManager)
+                            .frame(width: cameraSize.width, height: cameraSize.height)
+                            .opacity(vm.notchState == .closed ? 0 : 1)
+                            .blur(radius: vm.notchState == .closed ? 20 : 0)
+                            .animation(IslandMotion.content, value: shouldShowCamera)
+                            .accessibilityLabel("Camera mirror preview")
+                            .accessibilityValue(webcamManager.isSessionRunning ? "Live" : (webcamManager.statusMessage ?? "Unavailable"))
+                    }
                 }
+                .frame(height: budget.moduleHeight, alignment: .top)
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, IslandStyle.homeHorizontalInset)
+        .padding(.top, IslandStyle.homeTopInset)
+        .padding(.bottom, IslandStyle.homeBottomInset)
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
         .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
+}
+
+/// MacIsland's signature treatment: the playing artwork casts a restrained
+/// pool of color through the lower surface while the camera bridge stays
+/// hardware black. This is intentionally static under Reduce Motion.
+private struct HomeAmbientBackdrop: View {
+    @ObservedObject private var musicManager = MusicManager.shared
+
+    private var tint: Color {
+        Color(nsColor: musicManager.avgColor)
+            .ensureMinimumBrightness(factor: 0.55)
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .bottomLeading) {
+                LinearGradient(
+                    colors: [
+                        .clear,
+                        tint.opacity(musicManager.isPlaying ? Color.islandAmbientGlowOpacity * 0.45 : 0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                Ellipse()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                tint.opacity(musicManager.isPlaying ? Color.islandAmbientGlowOpacity : 0),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: max(proxy.size.width * 0.42, 1)
+                        )
+                    )
+                    .frame(width: proxy.size.width * 0.78, height: 76)
+                    .offset(x: -proxy.size.width * 0.08, y: 24)
+                    .blur(radius: 18)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -573,6 +627,17 @@ private struct HomeWeatherModule: View {
         }
         .font(.caption.weight(.medium))
         .foregroundStyle(Color.islandSecondaryText)
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .frame(height: IslandStyle.homeWeatherHeight)
+        .background(
+            Color.islandModuleSurface,
+            in: Capsule()
+        )
+        .overlay {
+            Capsule()
+                .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { coordinator.refreshWeather() }
     }
@@ -623,7 +688,7 @@ struct MusicSliderView: View {
                 range: 0...duration,
                 color: Defaults[.sliderColor] == SliderColorEnum.albumArt
                     ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.8)
-                    : Defaults[.sliderColor] == SliderColorEnum.accent ? .effectiveAccent : .white,
+                    : Defaults[.sliderColor] == SliderColorEnum.accent ? .islandFocus : .islandPrimaryText,
                 dragging: $dragging,
                 lastDragged: $lastDragged,
                 onValueChange: onValueChange
@@ -638,7 +703,7 @@ struct MusicSliderView: View {
             .fontWeight(.medium)
             .foregroundColor(
                 Defaults[.playerColorTinting]
-                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.6) : .gray
+                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.6) : Color.islandSecondaryText
             )
             .font(.caption)
         }
@@ -665,7 +730,7 @@ struct MusicSliderView: View {
 struct CustomSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double>
-    var color: Color = .white
+    var color: Color = .islandPrimaryText
     @Binding var dragging: Bool
     @Binding var lastDragged: Date
     var onValueChange: ((Double) -> Void)?
@@ -682,7 +747,7 @@ struct CustomSlider: View {
 
             ZStack(alignment: .leading) {
                 Rectangle()
-                    .fill(.gray.opacity(0.3))
+                    .fill(Color.islandTrack)
                     .frame(height: height)
 
                 Rectangle()
@@ -695,7 +760,7 @@ struct CustomSlider: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        withAnimation {
+                        withAnimation(IslandMotion.interaction) {
                             dragging = true
                         }
                         let newValue = range.lowerBound + Double(gesture.location.x / width) * rangeSpan

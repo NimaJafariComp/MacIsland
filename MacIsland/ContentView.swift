@@ -11,7 +11,7 @@ import KeyboardShortcuts
 import SwiftUI
 import SwiftUIIntrospect
 
-private enum IslandScene {
+enum IslandScene: Equatable {
     case onboarding
     case battery
     case systemHUD
@@ -21,6 +21,64 @@ private enum IslandScene {
     case home
     case shelf
     case collapsed
+}
+
+struct IslandSceneInput {
+    let isOnboarding: Bool
+    let isOpen: Bool
+    let currentView: NotchViews
+    let isBatteryActivityVisible: Bool
+    let isSystemHUDVisible: Bool
+    let isTimerVisible: Bool
+    let isTimerCompleted: Bool
+    let isMediaVisible: Bool
+    let isIdleFaceVisible: Bool
+    let isScreenLocked: Bool
+
+    init(
+        isOnboarding: Bool,
+        isOpen: Bool,
+        currentView: NotchViews,
+        isBatteryActivityVisible: Bool,
+        isSystemHUDVisible: Bool,
+        isTimerVisible: Bool,
+        isTimerCompleted: Bool,
+        isMediaVisible: Bool,
+        isIdleFaceVisible: Bool,
+        isScreenLocked: Bool = false
+    ) {
+        self.isOnboarding = isOnboarding
+        self.isOpen = isOpen
+        self.currentView = currentView
+        self.isBatteryActivityVisible = isBatteryActivityVisible
+        self.isSystemHUDVisible = isSystemHUDVisible
+        self.isTimerVisible = isTimerVisible
+        self.isTimerCompleted = isTimerCompleted
+        self.isMediaVisible = isMediaVisible
+        self.isIdleFaceVisible = isIdleFaceVisible
+        self.isScreenLocked = isScreenLocked
+    }
+}
+
+enum IslandSceneResolver {
+    /// User-opened content wins. Closed live-activity priority is battery,
+    /// completed timer, system HUD, active timer, media, then idle face.
+    /// A completed timer holds its acknowledgement control through transient HUDs;
+    /// battery remains first because it can convey a critical system condition.
+    static func resolve(_ input: IslandSceneInput) -> IslandScene {
+        if input.isScreenLocked { return .collapsed }
+        if input.isOnboarding { return .onboarding }
+        if input.isOpen {
+            return input.currentView == .shelf ? .shelf : .home
+        }
+        if input.isBatteryActivityVisible { return .battery }
+        if input.isTimerCompleted { return .timer }
+        if input.isSystemHUDVisible { return .systemHUD }
+        if input.isTimerVisible { return .timer }
+        if input.isMediaVisible { return .media }
+        if input.isIdleFaceVisible { return .face }
+        return .collapsed
+    }
 }
 
 @MainActor
@@ -73,7 +131,11 @@ struct ContentView: View {
         case .timer:
             chinWidth += 140
         case .media, .face:
-            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+            let media = ClosedMediaActivityGeometry(
+                physicalBridgeWidth: vm.closedNotchSize.width,
+                closedHeight: vm.effectiveClosedNotchHeight
+            )
+            chinWidth = media.totalWidth
         default:
             break
         }
@@ -82,47 +144,33 @@ struct ContentView: View {
     }
 
     private var islandScene: IslandScene {
-        if coordinator.helloAnimationRunning { return .onboarding }
-
-        if vm.notchState == .open {
-            return coordinator.currentView == .shelf ? .shelf : .home
-        }
-
-        if coordinator.expandingView.type == .battery,
-           coordinator.expandingView.show,
-           Defaults[.showPowerStatusNotifications]
-        {
-            return .battery
-        }
-
-        if coordinator.sneakPeek.show,
-           Defaults[.inlineHUD],
-           coordinator.sneakPeek.type != .music,
-           coordinator.sneakPeek.type != .battery
-        {
-            return .systemHUD
-        }
-
-        if coordinator.timerStatus.isVisible, !vm.hideOnClosed { return .timer }
-
-        if (!coordinator.expandingView.show || coordinator.expandingView.type == .music),
-           (musicManager.isPlaying || !musicManager.isPlayerIdle),
-           coordinator.musicLiveActivityEnabled,
-           !vm.hideOnClosed
-        {
-            return .media
-        }
-
-        if !coordinator.expandingView.show,
-           !musicManager.isPlaying,
-           musicManager.isPlayerIdle,
-           Defaults[.showNotHumanFace],
-           !vm.hideOnClosed
-        {
-            return .face
-        }
-
-        return .collapsed
+        IslandSceneResolver.resolve(
+            IslandSceneInput(
+                isOnboarding: coordinator.helloAnimationRunning,
+                isOpen: vm.notchState == .open,
+                currentView: coordinator.currentView,
+                isBatteryActivityVisible: coordinator.expandingView.type == .battery
+                    && coordinator.expandingView.show
+                    && Defaults[.showPowerStatusNotifications],
+                isSystemHUDVisible: coordinator.sneakPeek.show
+                    && (coordinator.sneakPeek.type.isSystemState
+                        || (Defaults[.inlineHUD]
+                            && coordinator.sneakPeek.type != .music
+                            && coordinator.sneakPeek.type != .battery)),
+                isTimerVisible: coordinator.timerStatus.isVisible && !vm.hideOnClosed,
+                isTimerCompleted: coordinator.timerStatus == .completed && !vm.hideOnClosed,
+                isMediaVisible: (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
+                    && (musicManager.isPlaying || !musicManager.isPlayerIdle)
+                    && coordinator.musicLiveActivityEnabled
+                    && !vm.hideOnClosed,
+                isIdleFaceVisible: !coordinator.expandingView.show
+                    && !musicManager.isPlaying
+                    && musicManager.isPlayerIdle
+                    && Defaults[.showNotHumanFace]
+                    && !vm.hideOnClosed,
+                isScreenLocked: vm.isScreenLocked
+            )
+        )
     }
 
     var body: some View {
@@ -138,6 +186,9 @@ struct ContentView: View {
                 let mainLayout = IslandSurface(
                     isOpen: vm.notchState == .open,
                     isHovering: isHovering,
+                    usesFlushClosedGeometry: islandScene == .collapsed,
+                    openSize: vm.openIslandSize,
+                    closedContentWidth: islandScene == .media ? computedChinWidth : nil,
                     closedHeight: vm.effectiveClosedNotchHeight,
                     cornerRadiusScaling: Defaults[.cornerRadiusScaling],
                     shape: currentNotchShape,
@@ -145,20 +196,39 @@ struct ContentView: View {
                 ) {
                     NotchLayout()
                 }
+
+                let hoverHorizontalInset = vm.notchState == .closed
+                    ? max(0, (vm.hoverHitSize.width - vm.closedSurfaceSize.width) / 2)
+                    : 0
+                let hoverBottomInset = vm.notchState == .closed
+                    ? max(0, vm.hoverHitSize.height - vm.closedSurfaceSize.height)
+                    : 0
                 
                 mainLayout
                     .frame(height: vm.notchState == .open ? vm.notchSize.height : nil)
+                    // The clear target implements NotchMetrics.hoverHitFrame
+                    // without enlarging or recoloring the physical bridge.
+                    .padding(.horizontal, hoverHorizontalInset)
+                    .padding(.bottom, hoverBottomInset)
                     .conditionalModifier(true) { view in
                         return view
-                            .animation(nil, value: vm.notchState)
+                            // The island's frame and content must share the
+                            // same state transition. Disabling this animation
+                            // made close collapse in a single render pass.
+                            .animation(IslandMotion.state, value: vm.notchState)
                             .animation(IslandMotion.interaction, value: gestureProgress)
                     }
                     .contentShape(Rectangle())
                     .onHover { hovering in
                         handleHover(hovering)
                     }
-                    .onTapGesture {
-                        doOpen()
+                    // Opening is a closed-island affordance. Keeping this
+                    // parent gesture active while open steals taps from the
+                    // header tabs and other child controls.
+                    .conditionalModifier(vm.notchState == .closed) { view in
+                        view.onTapGesture {
+                            doOpen()
+                        }
                     }
                     .conditionalModifier(Defaults[.enableGestures]) { view in
                         view
@@ -188,7 +258,7 @@ struct ContentView: View {
                     }
                     .onChange(of: vm.notchState) { _, newState in
                         if newState == .closed && isHovering {
-                            withAnimation {
+                            withAnimation(IslandMotion.interaction) {
                                 isHovering = false
                             }
                         }
@@ -223,7 +293,7 @@ struct ContentView: View {
                     }
                 if vm.chinHeight > 0 {
                     Rectangle()
-                        .fill(Color.black.opacity(0.01))
+                        .fill(Color.islandHitTarget)
                         .frame(width: computedChinWidth, height: vm.chinHeight)
                 }
             }
@@ -241,14 +311,15 @@ struct ContentView: View {
         .overlay(alignment: .top) {
             if vm.anyDropZoneTargeting {
                 Rectangle()
-                    .fill(Color.effectiveAccent)
+                    .fill(Color.islandFocus)
                     .frame(height: 1)
-                    .shadow(color: Color.effectiveAccent.opacity(0.7), radius: 3)
+                    .shadow(color: Color.islandFocus.opacity(0.7), radius: 3)
                     .accessibilityLabel("Drop target active")
                     .transition(.opacity)
             }
         }
         .preferredColorScheme(.dark)
+        .allowsHitTesting(!vm.isScreenLocked)
         .environmentObject(vm)
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
@@ -286,8 +357,8 @@ struct ContentView: View {
 
     @ViewBuilder
     func NotchLayout() -> some View {
-        VStack(alignment: .leading) {
-            VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 switch islandScene {
                 case .onboarding:
                     Spacer()
@@ -302,8 +373,15 @@ struct ContentView: View {
                 case .battery:
                     BatteryLiveActivity()
                 case .systemHUD:
-                    InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
-                        .transition(.opacity)
+                    if coordinator.sneakPeek.type.isSystemState {
+                        SystemStateLiveActivity(
+                            type: coordinator.sneakPeek.type,
+                            value: coordinator.sneakPeek.value
+                        )
+                    } else {
+                        InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
+                            .transition(.opacity)
+                    }
                 case .timer:
                     TimerLiveActivity()
                 case .media:
@@ -315,11 +393,16 @@ struct ContentView: View {
                         .frame(height: max(24, vm.effectiveClosedNotchHeight))
                         .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
                 case .collapsed:
-                    Rectangle().fill(.clear).frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
+                    Rectangle()
+                        .fill(.clear)
+                        .frame(
+                            width: vm.closedSurfaceSize.width,
+                            height: vm.effectiveClosedNotchHeight
+                        )
                 }
 
                 if coordinator.sneakPeek.show {
-                          if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && !Defaults[.inlineHUD] && vm.notchState == .closed {
+                          if coordinator.sneakPeek.type.requiresHUDReplacement && !Defaults[.inlineHUD] && vm.notchState == .closed && !vm.isScreenLocked {
                               SystemEventIndicatorModifier(
                                   eventType: $coordinator.sneakPeek.type,
                                   value: $coordinator.sneakPeek.value,
@@ -345,10 +428,10 @@ struct ContentView: View {
                                   HStack(alignment: .center) {
                                       Image(systemName: "music.note")
                                       GeometryReader { geo in
-                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6) : .gray, minDuration: 1, frameWidth: geo.size.width)
+                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6) : Color.islandSecondaryText, minDuration: 1, frameWidth: geo.size.width)
                                       }
                                   }
-                                  .foregroundStyle(.gray)
+                                  .foregroundStyle(Color.islandSecondaryText)
                                   .padding(.bottom, 10)
                               }
                           }
@@ -360,21 +443,29 @@ struct ContentView: View {
               }
               .zIndex(2)
             if vm.notchState == .open {
-                VStack {
+                Group {
                     switch coordinator.currentView {
                     case .home:
-                        NotchHomeView(albumArtNamespace: albumArtNamespace)
+                        NotchHomeView(
+                            albumArtNamespace: albumArtNamespace,
+                            availableSize: IslandStyle.expandedPageSize(
+                                openIslandSize: vm.openIslandSize,
+                                headerHeight: vm.effectiveClosedNotchHeight,
+                                surfaceHorizontalInset: topCornerRadius
+                                    + IslandStyle.openSurfacePadding
+                            )
+                        )
                     case .shelf:
                         ShelfView()
                     case .clipboard:
                         ClipboardHistoryView()
                     }
                 }
-                .transition(
-                    .scale(scale: 0.8, anchor: .top)
-                    .combined(with: .opacity)
-                    .animation(IslandMotion.content)
-                )
+                // The panel and header own the available page rect. A tab's
+                // intrinsic size must not enlarge, shift, or clip the island.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .id(coordinator.currentView)
+                .transition(.opacity.animation(IslandMotion.content))
                 .zIndex(1)
                 .allowsHitTesting(vm.notchState == .open)
                 .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
@@ -388,10 +479,10 @@ struct ContentView: View {
         HStack(spacing: 0) {
             Text(batteryModel.statusText)
                 .font(.subheadline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.islandPrimaryText)
 
             Rectangle()
-                .fill(.black)
+                .fill(Color.islandHardwareSurface)
                 .frame(width: vm.closedNotchSize.width + 10)
 
             BoringBatteryView(
@@ -420,7 +511,7 @@ struct ContentView: View {
                         height: max(0, vm.effectiveClosedNotchHeight - 12)
                     )
                 Rectangle()
-                    .fill(.black)
+                    .fill(Color.islandHardwareSurface)
                     .frame(width: vm.closedNotchSize.width - 20)
                 MinimalFaceFeatures()
             }
@@ -432,7 +523,12 @@ struct ContentView: View {
 
     @ViewBuilder
     func MusicLiveActivity() -> some View {
-        HStack {
+        let layout = ClosedMediaActivityGeometry(
+            physicalBridgeWidth: vm.closedNotchSize.width,
+            closedHeight: vm.effectiveClosedNotchHeight
+        )
+
+        HStack(spacing: 0) {
             Image(nsImage: musicManager.albumArt)
                 .resizable()
                 .clipped()
@@ -442,12 +538,12 @@ struct ContentView: View {
                 )
                 .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
                 .frame(
-                    width: max(0, vm.effectiveClosedNotchHeight - 12),
-                    height: max(0, vm.effectiveClosedNotchHeight - 12)
+                    width: layout.wingWidth,
+                    height: layout.wingWidth
                 )
 
             Rectangle()
-                .fill(.black)
+                .fill(Color.islandHardwareSurface)
                 .overlay(
                     HStack(alignment: .top) {
                         if coordinator.expandingView.show
@@ -456,7 +552,7 @@ struct ContentView: View {
                             MarqueeText(
                                 .constant(musicManager.songTitle),
                                 textColor: Defaults[.coloredSpectrogram]
-                                    ? Color(nsColor: musicManager.avgColor) : Color.gray,
+                                    ? Color(nsColor: musicManager.avgColor) : Color.islandSecondaryText,
                                 minDuration: 0.4,
                                 frameWidth: 100
                             )
@@ -473,7 +569,7 @@ struct ContentView: View {
                                 .foregroundStyle(
                                     Defaults[.coloredSpectrogram]
                                         ? Color(nsColor: musicManager.avgColor)
-                                        : Color.gray
+                                        : Color.islandSecondaryText
                                 )
                                 .opacity(
                                     (coordinator.expandingView.show
@@ -489,8 +585,7 @@ struct ContentView: View {
                         && coordinator.expandingView.type == .music
                         && Defaults[.sneakPeekStyles] == .inline)
                         ? 380
-                        : vm.closedNotchSize.width
-                            + -cornerRadiusInsets.closed.top
+                        : layout.bridgeWidth
                 )
 
             HStack {
@@ -499,7 +594,7 @@ struct ContentView: View {
                         .fill(
                             Defaults[.coloredSpectrogram]
                                 ? Color(nsColor: musicManager.avgColor).gradient
-                                : Color.gray.gradient
+                                : Color.islandSecondaryText.gradient
                         )
                         .frame(width: 50, alignment: .center)
                         .matchedGeometryEffect(id: "spectrum", in: albumArtNamespace)
@@ -517,12 +612,11 @@ struct ContentView: View {
             .frame(
                 width: max(
                     0,
-                    vm.effectiveClosedNotchHeight - 12
-                        + gestureProgress / 2
+                    layout.wingWidth + gestureProgress / 2
                 ),
                 height: max(
                     0,
-                    vm.effectiveClosedNotchHeight - 12
+                    layout.wingWidth
                 ),
                 alignment: .center
             )
@@ -535,26 +629,36 @@ struct ContentView: View {
 
     @ViewBuilder
     func TimerLiveActivity() -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: coordinator.timerStatus == .completed ? "bell.fill" : "timer")
-                .foregroundStyle(coordinator.timerStatus == .completed ? Color.effectiveAccent : .white)
+        VStack(spacing: 0) {
+            // Keep physical camera housing visually silent. Activity controls begin below it.
+            Color.clear
+                .frame(height: vm.effectiveClosedNotchHeight)
 
-            Text(timerText)
-                .font(.system(.subheadline, design: .rounded).monospacedDigit().weight(.semibold))
+            HStack(spacing: 8) {
+                Image(systemName: coordinator.timerStatus == .completed ? "bell.fill" : "timer")
+                    .foregroundStyle(coordinator.timerStatus == .completed ? Color.islandFocus : Color.islandPrimaryText)
 
-            if coordinator.timerStatus == .completed {
-                Button("Done") { coordinator.stopTimer() }
+                Text(timerText)
+                    .font(IslandTypography.numericControl)
+
+                if coordinator.timerStatus == .completed {
+                    Button("Done") { coordinator.stopTimer() }
+                        .buttonStyle(.borderless)
+                } else {
+                    Button(coordinator.timerStatus == .running ? "Pause" : "Resume") {
+                        coordinator.toggleTimerPause()
+                    }
                     .buttonStyle(.borderless)
-            } else {
-                Button(coordinator.timerStatus == .running ? "Pause" : "Resume") {
-                    coordinator.toggleTimerPause()
                 }
-                .buttonStyle(.borderless)
             }
+            .frame(minWidth: 228, minHeight: 40)
+            .padding(.horizontal, 10)
+            .background(Capsule().fill(Color.islandElevatedSurface))
+            .overlay(Capsule().stroke(Color.islandBorder, lineWidth: 1))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+        .foregroundStyle(Color.islandPrimaryText)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Timer, \(timerText)")
     }
@@ -570,7 +674,7 @@ struct ContentView: View {
 
     @ViewBuilder
     var dragDetector: some View {
-        if Defaults[.boringShelf] && vm.notchState == .closed {
+        if Defaults[.boringShelf] && vm.notchState == .closed && !vm.isScreenLocked {
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -585,12 +689,17 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        guard !vm.isScreenLocked else { return }
         vm.open()
     }
 
     // MARK: - Hover Management
 
     private func handleHover(_ hovering: Bool) {
+        guard !vm.isScreenLocked else {
+            isHovering = false
+            return
+        }
         if coordinator.firstLaunch { return }
         hoverTask?.cancel()
         
@@ -604,6 +713,7 @@ struct ContentView: View {
             }
             
             guard vm.notchState == .closed,
+                  !coordinator.timerStatus.isVisible,
                   !coordinator.sneakPeek.show,
                   Defaults[.openNotchOnHover] else { return }
             
@@ -691,23 +801,60 @@ struct ContentView: View {
     }
 }
 
+private struct SystemStateLiveActivity: View {
+    @EnvironmentObject private var vm: BoringViewModel
+    let type: SneakContentType
+    let value: CGFloat
+
+    private var title: String { SystemStatePresentation.title(for: type, value: value) }
+    private var detail: String { SystemStatePresentation.detail(for: type, value: value) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // The physical camera housing remains clear; the state appears below it.
+            Color.clear
+                .frame(height: vm.effectiveClosedNotchHeight)
+
+            HStack(spacing: 8) {
+                Image(systemName: SystemStatePresentation.symbol(for: type, value: value))
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(IslandTypography.control)
+                    Text(detail)
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(Color.islandSecondaryText)
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Color.islandPrimaryText)
+            .frame(minWidth: 228, minHeight: 40, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(Capsule().fill(Color.islandElevatedSurface))
+            .overlay(Capsule().stroke(Color.islandBorder, lineWidth: 1))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(detail)")
+    }
+}
+
 private struct ClipboardHistoryView: View {
     @ObservedObject private var coordinator = BoringViewCoordinator.shared
     @State private var query = ""
+    @State private var copiedEntryID: ClipboardEntry.ID?
 
     private var entries: [ClipboardEntry] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return coordinator.clipboardEntries }
-        return coordinator.clipboardEntries.filter {
-            $0.text.localizedCaseInsensitiveContains(trimmed)
-        }
+        BoringViewCoordinator.matchingClipboardEntries(coordinator.clipboardEntries, query: query)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Snippets", systemImage: "doc.on.clipboard")
-                    .font(.headline)
+                    .font(IslandTypography.title)
                 Spacer()
                 if !coordinator.clipboardEntries.isEmpty {
                     Button("Clear") { coordinator.clearClipboardHistory() }
@@ -724,15 +871,31 @@ private struct ClipboardHistoryView: View {
                     ContentUnavailableView("No snippets yet", systemImage: "doc.on.clipboard", description: Text("Copy text to add it here."))
                 } else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 6) {
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: IslandStyle.compactControlSpacing),
+                                GridItem(.flexible(), spacing: IslandStyle.compactControlSpacing)
+                            ],
+                            alignment: .leading,
+                            spacing: IslandStyle.compactControlSpacing
+                        ) {
                             ForEach(entries) { entry in
-                                HStack(spacing: 8) {
+                                HStack(spacing: IslandStyle.compactControlSpacing) {
                                     Text(entry.text)
+                                        .font(IslandTypography.body)
                                         .lineLimit(2)
                                         .truncationMode(.tail)
-                                    Spacer(minLength: 8)
-                                    Button("Copy") { coordinator.pasteClipboardEntry(entry) }
+                                    Spacer(minLength: IslandStyle.compactControlSpacing)
+                                    Button(copiedEntryID == entry.id ? "Copied" : "Copy") {
+                                        coordinator.copyClipboardEntry(entry)
+                                        copiedEntryID = entry.id
+                                    }
                                         .buttonStyle(.borderless)
+                                        .accessibilityLabel(
+                                            copiedEntryID == entry.id
+                                                ? "Copied to clipboard"
+                                                : "Copy snippet to clipboard"
+                                        )
                                     Button(role: .destructive) {
                                         coordinator.removeClipboardEntry(entry)
                                     } label: {
@@ -741,8 +904,24 @@ private struct ClipboardHistoryView: View {
                                     .buttonStyle(.borderless)
                                     .accessibilityLabel("Delete snippet")
                                 }
-                                .padding(8)
-                                .background(Color.islandElevatedSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .padding(IslandStyle.compactControlPadding)
+                                .background(
+                                    Color.islandModuleSurface,
+                                    in: RoundedRectangle(
+                                        cornerRadius: IslandStyle.compactControlCornerRadius,
+                                        style: .continuous
+                                    )
+                                )
+                                .overlay {
+                                    RoundedRectangle(
+                                        cornerRadius: IslandStyle.compactControlCornerRadius,
+                                        style: .continuous
+                                    )
+                                    .stroke(
+                                        Color.islandModuleBorder,
+                                        lineWidth: IslandStyle.hairlineWidth
+                                    )
+                                }
                             }
                         }
                     }
@@ -754,10 +933,10 @@ private struct ClipboardHistoryView: View {
         }
         .padding(IslandStyle.modulePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.islandSurface, in: RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous))
+        .background(Color.islandModuleSurface, in: RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
-                .stroke(Color.islandBorder, lineWidth: 1)
+                .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
         }
         .accessibilityElement(children: .contain)
     }
@@ -786,6 +965,9 @@ struct FullScreenDropDelegate: DropDelegate {
 private struct IslandSurface<Content: View>: View {
     let isOpen: Bool
     let isHovering: Bool
+    let usesFlushClosedGeometry: Bool
+    let openSize: CGSize
+    let closedContentWidth: CGFloat?
     let closedHeight: CGFloat
     let cornerRadiusScaling: Bool
     let shape: NotchShape
@@ -794,21 +976,43 @@ private struct IslandSurface<Content: View>: View {
 
     var body: some View {
         content
-            .frame(alignment: .top)
-            .padding(.horizontal, horizontalInset)
-            .padding([.horizontal, .bottom], isOpen ? 12 : 0)
-            .background(.black)
+            .frame(
+                width: isOpen
+                    ? max(0, openSize.width - openHorizontalInset * 2)
+                    : closedContentWidth,
+                height: isOpen
+                    ? max(0, openSize.height - IslandStyle.openSurfacePadding)
+                    : nil,
+                alignment: .top
+            )
+            .padding(
+                .horizontal,
+                isOpen
+                    ? openHorizontalInset
+                    : (usesFlushClosedGeometry ? 0 : horizontalInset)
+            )
+            .padding(.bottom, isOpen ? IslandStyle.openSurfacePadding : 0)
+            .background(Color.islandHardwareSurface)
             .clipShape(shape)
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(.black)
+                    .fill(Color.islandHardwareSurface)
                     .frame(height: 1)
                     .padding(.horizontal, topCornerRadius)
             }
+            .overlay {
+                // Keep the closed physical bridge visually silent, while the
+                // expanded surface gets a clear, accessibility-aware edge.
+                shape
+                    .stroke(isOpen ? Color.islandBorder : .clear, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
             .shadow(
                 color: ((isOpen || isHovering) && Defaults[.enableShadow])
-                    ? .black.opacity(0.7) : .clear,
-                radius: cornerRadiusScaling ? 6 : 4
+                    ? IslandStyle.panelShadow : .clear,
+                radius: isOpen && cornerRadiusScaling
+                    ? IslandStyle.panelShadowRadius
+                    : IslandStyle.closedHoverShadowRadius
             )
             .padding(.bottom, closedHeight == 0 ? 10 : 0)
     }
@@ -818,6 +1022,10 @@ private struct IslandSurface<Content: View>: View {
             return cornerRadiusScaling ? cornerRadiusInsets.opened.top : cornerRadiusInsets.opened.bottom
         }
         return cornerRadiusInsets.closed.bottom
+    }
+
+    private var openHorizontalInset: CGFloat {
+        topCornerRadius + IslandStyle.openSurfacePadding
     }
 }
 

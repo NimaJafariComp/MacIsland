@@ -9,6 +9,22 @@ import Defaults
 import EventKit
 import SwiftUI
 
+enum CalendarAccessPolicy {
+    static func hasReadAccess(_ status: EKAuthorizationStatus) -> Bool {
+        if #available(macOS 14.0, *) {
+            return status == .fullAccess
+        }
+        return status == .authorized
+    }
+
+    static func shouldClearEvents(
+        calendarStatus: EKAuthorizationStatus,
+        reminderStatus: EKAuthorizationStatus
+    ) -> Bool {
+        !hasReadAccess(calendarStatus) && !hasReadAccess(reminderStatus)
+    }
+}
+
 // MARK: - CalendarManager
 
 @MainActor
@@ -166,10 +182,7 @@ class CalendarManager: ObservableObject {
     }
 
     private func hasReadAccess(_ status: EKAuthorizationStatus) -> Bool {
-        if #available(macOS 14.0, *) {
-            return status == .fullAccess
-        }
-        return status == .authorized
+        CalendarAccessPolicy.hasReadAccess(status)
     }
 
     func updateSelectedCalendars() {
@@ -227,7 +240,10 @@ class CalendarManager: ObservableObject {
 
     private func updateEvents() async {
         refreshAuthorizationStatuses()
-        guard hasReadAccess(calendarAuthorizationStatus) || hasReadAccess(reminderAuthorizationStatus) else {
+        guard !CalendarAccessPolicy.shouldClearEvents(
+            calendarStatus: calendarAuthorizationStatus,
+            reminderStatus: reminderAuthorizationStatus
+        ) else {
             events = []
             return
         }

@@ -6,7 +6,14 @@
 
 import SwiftUI
 
+enum IdleFaceMotionPolicy {
+    static func shouldAnimate(isVisible: Bool, reduceMotion: Bool) -> Bool {
+        isVisible && IslandMotion.allowsNonessentialMotion(reduceMotion: reduceMotion)
+    }
+}
+
 struct MinimalFaceFeatures: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isBlinking = false
     @State private var blinkTask: Task<Void, Never>?
     @State var height:CGFloat = 20;
@@ -24,7 +31,7 @@ struct MinimalFaceFeatures: View {
             VStack(spacing: 2) { // Adjusted spacing to fit within 30x30
                 // Nose
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white)
+                    .fill(Color.islandPrimaryText)
                     .frame(width: 3, height: 4)
                 
                 // Mouth (happy)
@@ -35,24 +42,33 @@ struct MinimalFaceFeatures: View {
                         path.move(to: CGPoint(x: 0, y: height / 2))
                         path.addQuadCurve(to: CGPoint(x: width, y: height / 2), control: CGPoint(x: width / 2, y: height))
                     }
-                    .stroke(Color.white, lineWidth: 2)
+                    .stroke(Color.islandPrimaryText, lineWidth: 2)
                 }
                 .frame(width: 14, height: 10)
             }
         }
         .frame(width: self.width, height: self.height) // Maximum size of face
         .onAppear {
-            startBlinking()
+            updateBlinking()
+        }
+        .onChange(of: reduceMotion) { _, _ in
+            updateBlinking()
         }
         .onDisappear {
-            blinkTask?.cancel()
-            blinkTask = nil
-            isBlinking = false
+            stopBlinking()
         }
     }
     
+    private func updateBlinking() {
+        guard IdleFaceMotionPolicy.shouldAnimate(isVisible: true, reduceMotion: reduceMotion) else {
+            stopBlinking()
+            return
+        }
+
+        startBlinking()
+    }
+
     private func startBlinking() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         blinkTask?.cancel()
         blinkTask = Task {
             while !Task.isCancelled {
@@ -65,6 +81,17 @@ struct MinimalFaceFeatures: View {
             }
         }
     }
+
+    private func stopBlinking() {
+        blinkTask?.cancel()
+        blinkTask = nil
+
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            isBlinking = false
+        }
+    }
 }
 
 struct Eye: View {
@@ -72,7 +99,7 @@ struct Eye: View {
     
     var body: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(Color.white)
+            .fill(Color.islandPrimaryText)
             .frame(width: 4, height: isBlinking ? 1 : 4)
             .frame(maxWidth: 15, maxHeight: 15) // Adjusted max size
             .animation(IslandMotion.content, value: isBlinking)
@@ -82,7 +109,7 @@ struct Eye: View {
 struct MinimalFaceFeatures_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color.black
+            Color.islandHardwareSurface
             MinimalFaceFeatures()
         }
         .previewLayout(.fixed(width: 60, height: 60)) // Adjusted preview size for better visibility

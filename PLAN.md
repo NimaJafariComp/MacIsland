@@ -590,6 +590,9 @@ Exit:
 Status: active. Phase 13 retired inactive code; it did not prove Alcove/Perch
 feature parity or a production-quality visual/runtime release.
 
+> Canonical status moved to [fixed.md](fixed.md). Do not update the Phase 14
+> checkboxes below; they are retained as historical phase context.
+
 #### P0 — Unblock real macOS runtime validation
 
 - [x] Restore LaunchServices and Spotlight access in the agent host session.
@@ -617,6 +620,9 @@ that LaunchServices database is unavailable to this execution session.
   `Scripts/create-dmg.sh` verifies strict bundle signatures before packaging and
   falls back to file-only hybrid-image conversion when DiskManagement is unavailable.
 - [ ] Sign final distribution with Developer ID Application and notarize/staple it.
+- [x] Add strict distribution verification. `Scripts/verify-distribution.sh`
+  rejects local signing and requires Developer ID authority, Gatekeeper
+  assessment, strict nested-code validation, and a stapled ticket.
 - [ ] Rebuild the shareable artifact only after signature and launch smoke tests pass.
 
 Known evidence: locally signed Release now verifies strictly, including embedded XPC
@@ -637,6 +643,11 @@ gate, not an app-bundle integrity defect.
 - [ ] Add UI/screenshot automation with an approved assistive-access test host.
   Current host has screen capture but denies `osascript` assistive access (`-25211`),
   so hover, click, gesture, Shelf, and Settings interactions remain manual gates.
+  `Scripts/visual-audit.sh` now captures host metadata plus named state PNGs and
+  exits before capture when Assistive Access is unavailable.
+- [x] Add deterministic geometry coverage for notched internal, notchless external,
+  and narrow displays. `NotchMetricsInput` separates screen measurement from
+  AppKit and XCTest validates physical-notch and open-panel bounds.
 - [x] Fix Quick Share provider discovery for services with invalid icon
   representations. Icons now serialize from a validated bitmap representation;
   full validation no longer emits `CGImageDestination…invalid capacity (0)`.
@@ -656,9 +667,9 @@ Live evidence, 2026-07-28:
   and content timing with Reduce Motion support; remaining scene ownership work
   stays below.
 - [~] Define one island scene model: closed, peek, expanded, live activity, and
-  file tray. `IslandScene` now owns primary presentation priority for onboarding,
-  system HUD, battery, timer, media, idle, Home, and Shelf; geometry ownership
-  remains in `ContentView` for the final extraction.
+  file tray. `IslandSceneResolver` now owns tested priority for onboarding,
+  user-opened content, system HUD, battery, timer, media, idle, Home, and Shelf;
+  `IslandSurface` owns silhouette, clipping, inset, seam, and elevation.
 - [ ] Tune closed-notch wings, black silhouette, shadows, hover target, and menu-bar
   blending from real 1x/2x screenshots. No content may render behind camera housing.
 - [ ] Replace conditional Home reflow with stable module slots and explicit compact/

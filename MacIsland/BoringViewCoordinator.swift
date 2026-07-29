@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Defaults
+import Network
 import SwiftUI
 import UserNotifications
 
@@ -33,6 +34,7 @@ struct PersistedCountdownTimer: Codable, Equatable {
 
 enum TimerCompletionNotification {
     static let identifier = "macisland.countdown-complete"
+    static let presentationOptions: UNNotificationPresentationOptions = [.banner, .list, .sound]
 
     static func content() -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
@@ -40,6 +42,26 @@ enum TimerCompletionNotification {
         content.body = "Your MacIsland countdown is complete."
         content.sound = .default
         return content
+    }
+
+    static func installForegroundDelivery() {
+        UNUserNotificationCenter.current().delegate = TimerCompletionNotificationDelegate.shared
+    }
+}
+
+private final class TimerCompletionNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = TimerCompletionNotificationDelegate()
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        guard notification.request.identifier == TimerCompletionNotification.identifier else {
+            completionHandler([])
+            return
+        }
+        completionHandler(TimerCompletionNotification.presentationOptions)
     }
 }
 
@@ -51,6 +73,71 @@ enum SneakContentType: Equatable {
     case mic
     case battery
     case download
+    case focus
+    case connectivity
+
+    var requiresHUDReplacement: Bool {
+        switch self {
+        case .volume, .brightness, .backlight, .mic:
+            true
+        case .music, .battery, .download, .focus, .connectivity:
+            false
+        }
+    }
+
+    var isSystemState: Bool {
+        self == .focus || self == .connectivity
+    }
+}
+
+enum ConnectivityState: Equatable {
+    case unknown
+    case online
+    case offline
+
+    init(pathStatus: NWPath.Status) {
+        self = pathStatus == .satisfied ? .online : .offline
+    }
+}
+
+enum SystemStatePresentation {
+    static func focusName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Focus" : String(trimmed.prefix(30))
+    }
+
+    static func title(for type: SneakContentType, value: CGFloat) -> String {
+        switch type {
+        case .focus:
+            return focusName(Defaults[.focusIndicatorName])
+        case .connectivity:
+            return value > 0 ? "Connected" : "Offline"
+        default:
+            return ""
+        }
+    }
+
+    static func detail(for type: SneakContentType, value: CGFloat) -> String {
+        switch type {
+        case .focus:
+            return value > 0 ? "Focus started" : "Focus ended"
+        case .connectivity:
+            return value > 0 ? "Internet connection restored" : "No internet connection"
+        default:
+            return ""
+        }
+    }
+
+    static func symbol(for type: SneakContentType, value: CGFloat) -> String {
+        switch type {
+        case .focus:
+            return value > 0 ? "moon.fill" : "moon"
+        case .connectivity:
+            return value > 0 ? "wifi" : "wifi.slash"
+        default:
+            return "circle"
+        }
+    }
 }
 
 struct sneakPeek {
@@ -173,16 +260,26 @@ class BoringViewCoordinator: ObservableObject {
     @Published private(set) var clipboardEntries: [ClipboardEntry] = []
     @Published private(set) var weatherStatus: WeatherStatus = .idle
     @Published private(set) var weatherSnapshot: WeatherSnapshot?
+    @Published private(set) var connectivityState: ConnectivityState = .unknown
+    @Published private(set) var focusIndicatorActive = Defaults[.focusIndicatorActive]
     @Published var helloAnimationRunning: Bool = false
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?
     private var hudEnableTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?
+    private var timerNotificationTask: Task<Void, Never>?
+    private var timerNotificationScheduleID = UUID()
     private var timerEndDate: Date?
     private var pendingActivities: [PendingIslandActivity] = []
     private var stopwatchStartedAt: Date?
     private var stopwatchAccumulatedElapsed: TimeInterval = 0
     private var clipboardMonitorTask: Task<Void, Never>?
+    private var weatherRefreshTask: Task<Void, Never>?
+    private var weatherRefreshID = UUID()
+    private var connectivityMonitor: NWPathMonitor?
+    private let connectivityQueue = DispatchQueue(label: "com.macisland.connectivity", qos: .utility)
+    private var hasReceivedConnectivityState = false
+    private var systemStatesSuspended = false
     private var clipboardChangeCount = NSPasteboard.general.changeCount
     private let clipboardStorageKey = "clipboardHistoryEntriesV1"
     private let weatherStorageKey = "weatherSnapshotV1"
@@ -236,6 +333,7 @@ class BoringViewCoordinator: ObservableObject {
     private var hudReplacementCancellable: AnyCancellable?
 
     private init() {
+        TimerCompletionNotification.installForegroundDelivery()
         // Perform migration from name-based to UUID-based storage
         if preferredScreenUUID == nil, let legacyName = legacyPreferredScreenName {
             // Try to find screen by name and migrate to UUID
@@ -256,6 +354,7 @@ class BoringViewCoordinator: ObservableObject {
         }
         
         selectedScreenUUID = preferredScreenUUID ?? NSScreen.main?.displayUUID ?? ""
+        configureSystemStateMonitoring()
         // Observe changes to accessibility authorization and react accordingly
         accessibilityObserver = NotificationCenter.default.addObserver(
             forName: Notification.Name.accessibilityAuthorizationChanged,
@@ -323,7 +422,94 @@ class BoringViewCoordinator: ObservableObject {
         restoreCountdownTimer()
     }
 
+    private func configureSystemStateMonitoring() {
+        Defaults.publisher(.connectivityActivityEnabled)
+            .map(\.newValue)
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                if enabled {
+                    self.startConnectivityMonitoring()
+                } else {
+                    self.stopConnectivityMonitoring()
+                }
+            }
+            .store(in: &cancellables)
+
+        Defaults.publisher(.focusIndicatorActive)
+            .map(\.newValue)
+            .removeDuplicates()
+            .sink { [weak self] active in
+                self?.focusIndicatorDidChange(active)
+            }
+            .store(in: &cancellables)
+
+        if Defaults[.connectivityActivityEnabled] {
+            startConnectivityMonitoring()
+        }
+    }
+
+    func setSystemStatesSuspended(_ suspended: Bool) {
+        systemStatesSuspended = suspended
+        if suspended {
+            stopConnectivityMonitoring()
+        } else if Defaults[.connectivityActivityEnabled] {
+            startConnectivityMonitoring()
+        }
+    }
+
+    private func startConnectivityMonitoring() {
+        guard connectivityMonitor == nil, !systemStatesSuspended else { return }
+        hasReceivedConnectivityState = false
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let state = ConnectivityState(pathStatus: path.status)
+            Task { @MainActor in
+                self?.connectivityDidChange(to: state)
+            }
+        }
+        connectivityMonitor = monitor
+        monitor.start(queue: connectivityQueue)
+    }
+
+    private func stopConnectivityMonitoring() {
+        connectivityMonitor?.cancel()
+        connectivityMonitor = nil
+        hasReceivedConnectivityState = false
+        connectivityState = .unknown
+    }
+
+    private func connectivityDidChange(to state: ConnectivityState) {
+        let wasInitialized = hasReceivedConnectivityState
+        let didChange = connectivityState != state
+        connectivityState = state
+        hasReceivedConnectivityState = true
+
+        guard wasInitialized, didChange,
+              Defaults[.connectivityActivityEnabled], !systemStatesSuspended else { return }
+        toggleSneakPeek(
+            status: true,
+            type: .connectivity,
+            duration: 3,
+            value: state == .online ? 1 : 0
+        )
+    }
+
+    private func focusIndicatorDidChange(_ active: Bool) {
+        focusIndicatorActive = active
+        guard Defaults[.focusIndicatorEnabled], !systemStatesSuspended else { return }
+        toggleSneakPeek(status: true, type: .focus, duration: 3, value: active ? 1 : 0)
+    }
+
+    func setFocusIndicatorActive(_ active: Bool) {
+        Defaults[.focusIndicatorActive] = active
+    }
+
     func refreshWeather(force: Bool = false) {
+        weatherRefreshTask?.cancel()
+        weatherRefreshTask = nil
+        weatherRefreshID = UUID()
+
         guard Defaults[.weatherEnabled] else {
             weatherStatus = .idle
             return
@@ -336,25 +522,53 @@ class BoringViewCoordinator: ObservableObject {
         }
 
         if !force, let weatherSnapshot,
-           Date().timeIntervalSince(weatherSnapshot.updatedAt) < weatherCacheLifetime
+           Self.isWeatherCacheFresh(
+               weatherSnapshot,
+               for: location,
+               now: .now,
+               lifetime: weatherCacheLifetime
+           )
         {
             weatherStatus = .ready
             return
         }
 
+        let refreshID = weatherRefreshID
         weatherStatus = .loading
-        Task { [weak self] in
+        weatherRefreshTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let resolved = try await Self.resolveWeatherLocation(named: location)
                 let snapshot = try await Self.fetchWeather(for: resolved, displayName: location)
+                guard !Task.isCancelled,
+                      self.weatherRefreshID == refreshID,
+                      Defaults[.weatherEnabled],
+                      Self.normalizedWeatherLocation(Defaults[.weatherLocationQuery]) == Self.normalizedWeatherLocation(location)
+                else { return }
                 self.weatherSnapshot = snapshot
                 self.weatherStatus = .ready
                 self.saveWeatherSnapshot(snapshot)
+                self.weatherRefreshTask = nil
             } catch {
+                guard !Task.isCancelled, self.weatherRefreshID == refreshID else { return }
                 self.weatherStatus = .failed("Weather unavailable")
+                self.weatherRefreshTask = nil
             }
         }
+    }
+
+    static func isWeatherCacheFresh(
+        _ snapshot: WeatherSnapshot,
+        for location: String,
+        now: Date,
+        lifetime: TimeInterval
+    ) -> Bool {
+        normalizedWeatherLocation(snapshot.location) == normalizedWeatherLocation(location)
+            && now.timeIntervalSince(snapshot.updatedAt) < lifetime
+    }
+
+    private static func normalizedWeatherLocation(_ location: String) -> String {
+        location.trimmingCharacters(in: .whitespacesAndNewlines).localizedLowercase
     }
 
     private func loadWeatherSnapshot() {
@@ -411,7 +625,7 @@ class BoringViewCoordinator: ObservableObject {
         )
     }
 
-    func pasteClipboardEntry(_ entry: ClipboardEntry) {
+    func copyClipboardEntry(_ entry: ClipboardEntry) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(entry.text, forType: .string)
@@ -426,6 +640,12 @@ class BoringViewCoordinator: ObservableObject {
     func clearClipboardHistory() {
         clipboardEntries = []
         saveClipboardEntries()
+    }
+
+    static func matchingClipboardEntries(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return entries }
+        return entries.filter { $0.text.localizedCaseInsensitiveContains(normalizedQuery) }
     }
 
     func recordClipboardText(_ text: String) {
@@ -625,7 +845,9 @@ class BoringViewCoordinator: ObservableObject {
             self.timerEndDate = nil
             timerStatus = .completed
             clearPersistedCountdownTimer()
-            cancelTimerCompletionNotification()
+            // Leave the already-scheduled request in place so macOS can deliver
+            // its normal completion alert and sound. Cancelling here races the
+            // notification trigger and makes a finished timer silent.
             NSApp.requestUserAttention(.informationalRequest)
         case .stopwatch:
             guard let stopwatchStartedAt else { return }
@@ -683,7 +905,10 @@ class BoringViewCoordinator: ObservableObject {
         let interval = endDate.timeIntervalSinceNow
         guard interval > 0 else { return }
 
-        Task {
+        timerNotificationTask?.cancel()
+        let scheduleID = UUID()
+        timerNotificationScheduleID = scheduleID
+        timerNotificationTask = Task { [weak self] in
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             let authorized: Bool
@@ -697,18 +922,26 @@ class BoringViewCoordinator: ObservableObject {
             @unknown default:
                 authorized = false
             }
-            guard authorized else { return }
+            guard authorized, !Task.isCancelled,
+                  self?.timerNotificationScheduleID == scheduleID
+            else { return }
 
             let request = UNNotificationRequest(
                 identifier: TimerCompletionNotification.identifier,
                 content: TimerCompletionNotification.content(),
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, interval), repeats: false)
             )
+            guard !Task.isCancelled,
+                  self?.timerNotificationScheduleID == scheduleID
+            else { return }
             try? await center.add(request)
         }
     }
 
     private func cancelTimerCompletionNotification() {
+        timerNotificationTask?.cancel()
+        timerNotificationTask = nil
+        timerNotificationScheduleID = UUID()
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: [TimerCompletionNotification.identifier]
         )
@@ -748,8 +981,9 @@ class BoringViewCoordinator: ObservableObject {
         status: Bool, type: SneakContentType, duration: TimeInterval = 1.5, value: CGFloat = 0,
         icon: String = ""
     ) {
+        guard status || (sneakPeek.show && sneakPeek.type == type) else { return }
         sneakPeekDuration = duration
-        if type != .music {
+        if type.requiresHUDReplacement {
             // close()
             if !Defaults[.hudReplacement] {
                 return
@@ -760,7 +994,9 @@ class BoringViewCoordinator: ObservableObject {
             return
         }
         if status, expandingView.show, activityPriority(for: type) > activityPriority(for: expandingView.type) {
-            toggleExpandingView(status: false, type: expandingView.type)
+            performActivityHandoff {
+                toggleExpandingView(status: false, type: expandingView.type)
+            }
         }
 
         withAnimation(IslandMotion.content) {
@@ -777,6 +1013,8 @@ class BoringViewCoordinator: ObservableObject {
 
     private var sneakPeekDuration: TimeInterval = 1.5
     private var sneakPeekTask: Task<Void, Never>?
+    // A preemption must not drain queued work before its replacement is visible.
+    private var isHandingOffActivity = false
 
     // Helper function to manage sneakPeek timer using Swift Concurrency
     private func scheduleSneakPeekHide(after duration: TimeInterval) {
@@ -786,8 +1024,8 @@ class BoringViewCoordinator: ObservableObject {
             try? await Task.sleep(for: .seconds(duration))
             guard let self = self, !Task.isCancelled else { return }
             await MainActor.run {
-                withAnimation {
-                    self.toggleSneakPeek(status: false, type: .music)
+                withAnimation(IslandMotion.content) {
+                    self.toggleSneakPeek(status: false, type: self.sneakPeek.type)
                     self.sneakPeekDuration = 1.5
                 }
             }
@@ -800,7 +1038,9 @@ class BoringViewCoordinator: ObservableObject {
                 scheduleSneakPeekHide(after: sneakPeekDuration)
             } else {
                 sneakPeekTask?.cancel()
-                presentNextActivityIfPossible()
+                if !isHandingOffActivity {
+                    presentNextActivityIfPossible()
+                }
             }
         }
     }
@@ -811,12 +1051,15 @@ class BoringViewCoordinator: ObservableObject {
         value: CGFloat = 0,
         browser: BrowserType = .chromium
     ) {
+        guard status || (expandingView.show && expandingView.type == type) else { return }
         if status, !canPresent(type: type) {
             enqueue(.expanded(type: type, value: value, browser: browser))
             return
         }
         if status, sneakPeek.show, activityPriority(for: type) > activityPriority(for: sneakPeek.type) {
-            toggleSneakPeek(status: false, type: sneakPeek.type)
+            performActivityHandoff {
+                toggleSneakPeek(status: false, type: sneakPeek.type)
+            }
         }
 
         withAnimation(IslandMotion.content) {
@@ -842,7 +1085,9 @@ class BoringViewCoordinator: ObservableObject {
                 }
             } else {
                 expandingViewTask?.cancel()
-                presentNextActivityIfPossible()
+                if !isHandingOffActivity {
+                    presentNextActivityIfPossible()
+                }
             }
         }
     }
@@ -852,6 +1097,7 @@ class BoringViewCoordinator: ObservableObject {
         case .battery: 5
         case .volume, .brightness, .backlight, .mic: 4
         case .download: 3
+        case .focus, .connectivity: 2
         case .music: 1
         }
     }
@@ -878,6 +1124,12 @@ class BoringViewCoordinator: ObservableObject {
         pendingActivities.sort { activityPriority(for: $0.type) > activityPriority(for: $1.type) }
     }
 
+    private func performActivityHandoff(_ action: () -> Void) {
+        isHandingOffActivity = true
+        action()
+        isHandingOffActivity = false
+    }
+
     private func presentNextActivityIfPossible() {
         guard !sneakPeek.show, !expandingView.show, !pendingActivities.isEmpty else { return }
         let next = pendingActivities.removeFirst()
@@ -891,5 +1143,15 @@ class BoringViewCoordinator: ObservableObject {
     
     func showEmpty() {
         currentView = .home
+    }
+
+    func dismissTransientActivitiesForLock() {
+        sneakPeekTask?.cancel()
+        expandingViewTask?.cancel()
+        pendingActivities.removeAll()
+        withAnimation(IslandMotion.content) {
+            sneakPeek.show = false
+            expandingView.show = false
+        }
     }
 }

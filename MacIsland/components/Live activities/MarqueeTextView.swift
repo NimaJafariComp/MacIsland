@@ -23,6 +23,7 @@ struct MeasureSizeModifier: ViewModifier {
 }
 
 struct MarqueeText: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var text: String
     let font: Font
     let nsFont: NSFont.TextStyle
@@ -48,6 +49,10 @@ struct MarqueeText: View {
     private var needsScrolling: Bool {
         textSize.width > frameWidth
     }
+
+    private var shouldScroll: Bool {
+        needsScrolling && !reduceMotion
+    }
     
     var body: some View {
         GeometryReader { geometry in
@@ -63,7 +68,7 @@ struct MarqueeText: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .offset(x: self.animate ? offset : 0)
                 .animation(
-                    self.animate ?
+                    self.animate && shouldScroll ?
                         .linear(duration: Double(textSize.width / 30))
                         .delay(minDuration)
                         .repeatForever(autoreverses: false) : .none,
@@ -76,7 +81,7 @@ struct MarqueeText: View {
                     self.animate = false
                     self.offset = 0
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.01){
-                        if needsScrolling {
+                        if self.shouldScroll {
                             self.animate = true
                             self.offset = -(textSize.width + 10)
                             
@@ -88,6 +93,14 @@ struct MarqueeText: View {
             .clipped()
         }
         .frame(height: textSize.height * 1.3)
-        
+        .onChange(of: reduceMotion) { _, isEnabled in
+            guard isEnabled else { return }
+            animate = false
+            offset = 0
+        }
+        .onDisappear {
+            animate = false
+            offset = 0
+        }
     }
 }

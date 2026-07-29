@@ -29,13 +29,13 @@ struct BatteryView: View {
     /// Determines the color of the battery based on its status.
     var batteryColor: Color {
         if isInLowPowerMode {
-            return .yellow
+            return .islandWarning
         } else if levelBattery <= 20 && !isCharging && !isPluggedIn {
-            return .red
+            return .islandCritical
         } else if isCharging || isPluggedIn || levelBattery == 100 {
-            return .green
+            return .islandPositive
         } else {
-            return .white
+            return .islandPrimaryText
         }
     }
 
@@ -46,7 +46,7 @@ struct BatteryView: View {
                 .resizable()
                 .fontWeight(.thin)
                 .aspectRatio(contentMode: .fit)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(Color.islandDisabledText)
                 .frame(
                     width: batteryWidth + 1
                 )
@@ -64,7 +64,7 @@ struct BatteryView: View {
                     Image(iconStatus)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
+                        .foregroundColor(Color.islandPrimaryText)
                         .frame(
                             width: 17,
                             height: 17
@@ -102,48 +102,48 @@ struct BatteryMenuView: View {
 
             HStack {
                 Text("Battery Status")
-                    .font(.headline)
+                    .font(IslandTypography.title)
                     .fontWeight(.semibold)
                 Spacer()
                 Text("\(Int(levelBattery))%")
-                    .font(.headline)
+                    .font(IslandTypography.title)
                     .fontWeight(.semibold)
             }
             
             VStack(alignment: .leading, spacing: 8) {
                 Text("Max Capacity: \(Int(maxCapacity))%")
-                    .font(.subheadline)
+                    .font(IslandTypography.body)
                     .fontWeight(.regular)
                 if isInLowPowerMode {
                     Label("Low Power Mode", systemImage: "bolt.circle")
-                        .font(.subheadline)
+                        .font(IslandTypography.body)
                         .fontWeight(.regular)
                 }
                 if isCharging {
                     Label("Charging", systemImage: "bolt.fill")
-                        .font(.subheadline)
+                        .font(IslandTypography.body)
                         .fontWeight(.regular)
                 }
                 if isPluggedIn {
                     Label("Plugged In", systemImage: "powerplug.fill")
-                        .font(.subheadline)
+                        .font(IslandTypography.body)
                         .fontWeight(.regular)
                 }
                 if timeToFullCharge > 0 {
                     Label("Time to Full Charge: \(timeToFullCharge) min", systemImage: "clock")
-                        .font(.subheadline)
+                        .font(IslandTypography.body)
                         .fontWeight(.regular)
                 }
                 if !isCharging && isPluggedIn && levelBattery >= 80 {
                     Label("Charging on Hold: Desktop Mode", systemImage: "desktopcomputer")
-                        .font(.subheadline)
+                        .font(IslandTypography.body)
                         .fontWeight(.regular)
                 }
                     
             }
             .padding(.vertical, 8)
 
-            Divider().background(Color.white)
+            Divider().background(Color.islandBorder)
 
             Button(action: openBatteryPreferences) {
                 Label("Battery Settings", systemImage: "gearshape")
@@ -155,7 +155,7 @@ struct BatteryMenuView: View {
         }
         .padding()
         .frame(width: 280)
-        .foregroundColor(.white)
+        .foregroundColor(Color.islandPrimaryText)
     }
 
     private func openBatteryPreferences() {
@@ -188,15 +188,15 @@ struct BoringBatteryView: View {
 
     var body: some View {
         Button(action: {
-            withAnimation {
+            withAnimation(IslandMotion.interaction) {
                 showPopupMenu.toggle()
             }
         }) {
             HStack {
                 if Defaults[.showBatteryPercentage] {
                     Text("\(Int32(levelBattery))%")
-                        .font(.callout)
-                        .foregroundStyle(.white)
+                    .font(IslandTypography.control)
+                        .foregroundStyle(Color.islandPrimaryText)
                 }
                 BatteryView(
                     levelBattery: levelBattery,
@@ -248,7 +248,7 @@ struct BoringBatteryView: View {
         hideTask = Task {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            await MainActor.run { withAnimation { showPopupMenu = false } }
+            await MainActor.run { withAnimation(IslandMotion.interaction) { showPopupMenu = false } }
         }
     }
 }

@@ -26,6 +26,7 @@ struct ShelfView: View {
                     handleDrop(providers: providers)
                 }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Bind Quick Look to shelf selection
         .onChange(of: selection.selectedIDs) {
             updateQuickLookSelection()
@@ -61,7 +62,7 @@ struct ShelfView: View {
 
     var panel: some View {
         RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
-            .fill(Color.islandSurface)
+            .fill(Color.islandModuleSurface)
             .overlay {
                 content
                     .padding(IslandStyle.modulePadding)
@@ -70,16 +71,13 @@ struct ShelfView: View {
                 RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
                     .stroke(
                         vm.dragDetectorTargeting
-                            ? Color.effectiveAccent.opacity(0.9)
-                            : Color.islandBorder,
+                            ? Color.islandFocus.opacity(0.9)
+                            : Color.islandModuleBorder,
                         lineWidth: vm.dragDetectorTargeting ? 2 : 1
                     )
             }
             .shadow(color: IslandStyle.panelShadow, radius: IslandStyle.panelShadowRadius, x: 0, y: 3)
             .animation(IslandMotion.content, value: vm.dragDetectorTargeting)
-            .transaction { transaction in
-                transaction.animation = vm.animation
-            }
             .contentShape(Rectangle())
             .onTapGesture { selection.clear() }
             .alert("Clear Shelf?", isPresented: $confirmsClear) {
@@ -106,13 +104,13 @@ struct ShelfView: View {
                     
                     Text("Shelf is empty")
                         .foregroundStyle(Color.islandPrimaryText)
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .font(IslandTypography.title)
                     Text("Drop files or links here")
                         .foregroundStyle(Color.islandSecondaryText)
-                        .font(.caption)
+                        .font(IslandTypography.metadata)
                     if let dropErrorMessage = tvm.dropErrorMessage {
                         Label(dropErrorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
+                            .font(IslandTypography.metadata)
                             .foregroundStyle(Color.islandWarning)
                             .accessibilityLabel(dropErrorMessage)
                     }
@@ -125,7 +123,7 @@ struct ShelfView: View {
 
                     if let dropErrorMessage = tvm.dropErrorMessage {
                         Label(dropErrorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
+                            .font(IslandTypography.metadata)
                             .foregroundStyle(Color.islandWarning)
                             .accessibilityLabel(dropErrorMessage)
                     }
@@ -162,7 +160,7 @@ struct ShelfView: View {
     private var shelfToolbar: some View {
         HStack(spacing: 6) {
             Label("\(tvm.items.count) \(tvm.items.count == 1 ? "item" : "items")", systemImage: "tray.full")
-                .font(.caption.weight(.medium))
+                .font(IslandTypography.metadata.weight(.medium))
                 .foregroundStyle(Color.islandSecondaryText)
 
             Spacer(minLength: 0)

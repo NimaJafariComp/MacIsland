@@ -20,6 +20,15 @@ CI secret store or the developer keychain. Never commit credentials, app-specifi
 passwords, profiles, or private signing keys. Submit the signed ZIP/DMG with
 `xcrun notarytool submit`, wait for acceptance, then staple the accepted ticket.
 
+After stapling, run:
+
+```bash
+Scripts/verify-distribution.sh /path/to/MacIsland.app
+```
+
+This rejects local/ad-hoc signatures and requires strict nested-code validation,
+Developer ID authority, Gatekeeper assessment, and a stapled ticket.
+
 ## GPL source offer
 
 Every distributed archive must include `LICENSE` and `THIRD_PARTY_LICENSES`.

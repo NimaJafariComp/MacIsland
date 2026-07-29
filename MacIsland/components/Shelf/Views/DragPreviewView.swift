@@ -14,14 +14,14 @@ struct DragPreviewView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
             Text(displayName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white)
+                .font(IslandTypography.control)
+                .foregroundColor(Color.islandPrimaryText)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.islandFocus))
                 .frame(alignment: .top)
         }
         .frame(width: 105)

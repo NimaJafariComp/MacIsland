@@ -72,6 +72,40 @@ final class TemporaryFileStorageService {
             try? FileManager.default.removeItem(at: url)
         }
     }
+
+    static func safeChildURL(
+        in directory: URL,
+        suggestedName: String?,
+        fallbackName: String
+    ) -> URL {
+        let safeName = safeFilename(suggestedName, fallbackName: fallbackName)
+        let standardizedDirectory = directory.standardizedFileURL
+        let candidate = standardizedDirectory.appendingPathComponent(safeName).standardizedFileURL
+
+        precondition(
+            candidate.deletingLastPathComponent() == standardizedDirectory,
+            "Temporary file must remain within its generated directory"
+        )
+        return candidate
+    }
+
+    static func safeFilename(_ suggestedName: String?, fallbackName: String) -> String {
+        let rawName = suggestedName ?? ""
+        let leafName = rawName.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? rawName
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._-"))
+        let sanitized = leafName.unicodeScalars.reduce(into: "") { result, scalar in
+            if allowed.contains(scalar) {
+                result.unicodeScalars.append(scalar)
+            } else {
+                result.append("_")
+            }
+        }.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sanitized.isEmpty, sanitized != ".", sanitized != ".." else {
+            return fallbackName
+        }
+        return sanitized
+    }
     
     // MARK: - Private Implementation
     
@@ -80,9 +114,12 @@ final class TemporaryFileStorageService {
         
         switch type {
         case .data(let data, let suggestedName):
-            let filename = suggestedName ?? ".dat"
             let dirURL = rootDirectory.appendingPathComponent(uuid, isDirectory: true)
-            let fileURL = dirURL.appendingPathComponent(filename)
+            let fileURL = Self.safeChildURL(
+                in: dirURL,
+                suggestedName: suggestedName,
+                fallbackName: "item.dat"
+            )
             
             do {
                 try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
@@ -113,9 +150,12 @@ final class TemporaryFileStorageService {
             }
             
         case .url(let url):
-            let filename = "\(url.host ?? uuid).webloc"
             let dirURL = rootDirectory.appendingPathComponent(uuid, isDirectory: true)
-            let fileURL = dirURL.appendingPathComponent(filename)
+            let fileURL = Self.safeChildURL(
+                in: dirURL,
+                suggestedName: "\(url.host ?? uuid).webloc",
+                fallbackName: "link.webloc"
+            )
             
             let weblocContent = createWeblocContent(for: url)
             guard let data = weblocContent.data(using: String.Encoding.utf8) else {
@@ -220,8 +260,11 @@ final class TemporaryFileStorageService {
             }
         }
 
-        let archiveName = suggestedName ?? "Archive.zip"
-        let archiveURL = workingDir.appendingPathComponent(archiveName)
+        let archiveURL = Self.safeChildURL(
+            in: workingDir,
+            suggestedName: suggestedName,
+            fallbackName: "Archive.zip"
+        )
         let args = ["-r", "-q", archiveURL.path, "."]
         let ok = runZip(arguments: args, currentDirectory: workingDir)
         if ok {

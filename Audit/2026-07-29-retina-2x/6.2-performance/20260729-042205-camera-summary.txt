@@ -1,0 +1,16 @@
+state=camera
+pid=34635
+refresh_hz=120
+frame_budget_ms=8.33
+hitch_threshold_ms=33
+hitch_count=0
+samples=6
+cpu_median_percent=2.3
+cpu_max_percent=2.6
+peak_rss_mib=145.0
+last_rss=144M
+displayed_surfaces_scope=system_compositor_not_app_only
+raw_top=/Users/nimajafari/Programming/git_repos/MacIsland/Audit/2026-07-29-retina-2x/6.2-performance/20260729-042205-camera-top.txt
+raw_hitches=/Users/nimajafari/Programming/git_repos/MacIsland/Audit/2026-07-29-retina-2x/6.2-performance/20260729-042205-camera-hitches.xml
+raw_displayed_surfaces=/Users/nimajafari/Programming/git_repos/MacIsland/Audit/2026-07-29-retina-2x/6.2-performance/20260729-042205-camera-displayed-surfaces.xml
+trace=/Users/nimajafari/Programming/git_repos/MacIsland/Audit/2026-07-29-retina-2x/6.2-performance/20260729-042205-camera-animation-hitches.trace
