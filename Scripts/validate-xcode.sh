@@ -3,6 +3,20 @@ set -euo pipefail
 
 repo_root=${0:A:h:h}
 derived_root=${DERIVED_DATA_PATH:-/private/tmp/macisland-derived}
+test_adapter="${derived_root}-test/Build/Products/Debug/MacIsland.app/Contents/Resources/mediaremote-adapter.pl"
+
+cleanup_test_adapter() {
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    command_line=$(ps -p "$pid" -o command= 2>/dev/null || true)
+    if [[ "$command_line" == *"$test_adapter"* ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done < <(pgrep -f "$test_adapter" || true)
+  return 0
+}
+
+trap cleanup_test_adapter EXIT
 
 cd "$repo_root"
 

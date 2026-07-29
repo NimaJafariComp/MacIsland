@@ -609,18 +609,19 @@ that LaunchServices database is unavailable to this execution session.
 #### P0 — Make every shipped bundle valid
 
 - [x] Add `CodeSignOnCopy` to the embedded `MacIslandXPCHelper.xpc` build phase.
-- [ ] Build Release with signing enabled and verify the app, XPC helper, and all
+- [x] Build Release with signing enabled and verify the app, XPC helper, and all
   nested frameworks using `codesign --verify --deep --strict --verbose=4`.
+  Revalidated 2026-07-29 with local signing at
+  `/private/tmp/macisland-release-signed.77VcQW`.
 - [x] Ensure release packaging rejects invalid input instead of creating a ZIP/DMG.
   `Scripts/create-dmg.sh` verifies strict bundle signatures before packaging and
   falls back to file-only hybrid-image conversion when DiskManagement is unavailable.
 - [ ] Sign final distribution with Developer ID Application and notarize/staple it.
 - [ ] Rebuild the shareable artifact only after signature and launch smoke tests pass.
 
-Known evidence: previous unsigned release artifact failed strict verification because
-the embedded XPC helper had no sealed resources/signature. An ad-hoc re-signed test
-copy verifies successfully, so this is packaging/configuration work rather than a
-runtime feature defect.
+Known evidence: locally signed Release now verifies strictly, including embedded XPC
+and frameworks. Developer ID signing/notarization remains a distribution credential
+gate, not an app-bundle integrity defect.
 
 #### P0 — Reliable native test execution
 
@@ -628,6 +629,8 @@ runtime feature defect.
 - [x] Run signed native validation: Debug build, Release build, and all five XCTest
   cases pass using `CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`.
 - [x] Update `Scripts/validate-xcode.sh` to use this signed XCTest configuration.
+- [x] Clean up the validation build's MediaRemote adapter child on exit so native
+  test runs cannot leave extra MacIsland-related background processes.
 - [x] Isolate the XCTest host bundle identifier. Validation now uses
   `com.macisland.validation`, so tests pass while another `com.macisland.app`
   instance is already active.
@@ -644,14 +647,18 @@ Live evidence, 2026-07-28:
 - App launches as one main process plus one MediaRemote adapter helper process.
 - First-run onboarding renders; island interaction was not asserted because the
   current automation host lacks assistive access.
+- 2026-07-29 isolated live launch rendered expected invisible idle closed state;
+  open-state capture remains blocked by missing assistive access.
 
 #### P1 — Close native-island visual gaps
 
 - [~] Centralize core island motion. `IslandMotion` now owns state, interaction,
   and content timing with Reduce Motion support; remaining scene ownership work
   stays below.
-- [ ] Define one island scene model: closed, peek, expanded, live activity, and
-  file tray. One component owns geometry, hit testing, clipping, and transition.
+- [~] Define one island scene model: closed, peek, expanded, live activity, and
+  file tray. `IslandScene` now owns primary presentation priority for onboarding,
+  system HUD, battery, timer, media, idle, Home, and Shelf; geometry ownership
+  remains in `ContentView` for the final extraction.
 - [ ] Tune closed-notch wings, black silhouette, shadows, hover target, and menu-bar
   blending from real 1x/2x screenshots. No content may render behind camera housing.
 - [ ] Replace conditional Home reflow with stable module slots and explicit compact/
@@ -659,23 +666,39 @@ Live evidence, 2026-07-28:
   Initial pass: Home now gives each enabled module an explicit width and camera frame;
   music-control slots no longer disappear when Calendar and Mirror are both active.
 - [ ] Replace scattered animation constants with shared motion tokens; respect Reduce
-  Motion and remove nonessential repeating work.
+  Motion and remove nonessential repeating work. Idle-face blinking now uses one
+  cancellable task per appearance and is disabled for Reduce Motion. Onboarding,
+  controls, HUDs, media, and status transitions now use `IslandMotion`; remaining
+  isolated preview-only animation is non-product code.
 - [ ] Author MacIsland-specific elevation, typography, hover, focus, status, and
   empty-state tokens. Do not reproduce reference-product artwork or layouts.
+  Initial tokens now define module/control radii, padding, contrast-safe elevation,
+  shared focused/empty Shelf states, plus semantic primary/secondary/warning text.
 
 #### P1 — Close core feature gaps against reference behavior
 
-- [ ] Implement timer: countdown, stopwatch, alarm completion, compact live state,
-  and accessible controls.
-- [ ] Implement snippets/clipboard history: privacy controls, retention limit,
-  keyboard shortcut, searchable compact panel, and paste action.
-- [ ] Implement weather only with explicit location/permission, loading/error states,
-  cache policy, and an opt-in Home module.
-- [ ] Introduce a generic live-activity coordinator with priority, queueing,
+- [~] Implement timer: countdown, stopwatch, alarm completion, compact live state,
+  and accessible controls. Countdown + stopwatch now have compact state and shared
+  pause/resume controls plus active-countdown recovery and opt-in durable
+  completion notifications; named presets persist and launch from the header.
+- [~] Implement snippets/clipboard history: privacy controls, retention limit,
+  keyboard shortcut, searchable compact panel, and paste action. Complete:
+  explicit opt-in, local history, configurable retention, search, copy/delete,
+  compact panel, shortcut, bundle-ID exclusions, and plain-text-only default;
+  direct-paste workflow remains.
+- [x] Implement weather only with explicit location/permission, loading/error states,
+  cache policy, and an opt-in Home module. Complete: explicit manual city,
+  Open-Meteo data, local 15-minute cache, real state UI, Home module, and
+  Celsius/Fahrenheit preference; injected HTTP tests cover valid and failing API
+  responses.
+- [~] Introduce a generic live-activity coordinator with priority, queueing,
   interruption rules, and a single presentation path for media, timers, transfer,
-  battery, and system HUDs.
-- [ ] Rework Shelf into compact tray: item actions, overflow, empty/loading/error,
-  drag feedback, Quick Look, and keyboard navigation.
+  battery, and system HUDs. `BoringViewCoordinator` now arbitrates/queues media,
+  download, system HUD, and battery activities; timer integration remains.
+- [~] Rework Shelf into compact tray. Complete: item count, selected-item
+  Delete-key removal, overflow, confirmed clear, empty/loading state, drag feedback,
+  Quick Look, share, Control-arrow selection, per-drop error state, and retained
+  security-scoped items. Remaining: screenshot proof.
 
 #### P2 — Product polish, performance, and test gates
 

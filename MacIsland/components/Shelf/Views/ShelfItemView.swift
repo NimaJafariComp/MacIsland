@@ -41,8 +41,8 @@ struct ShelfItemView: View {
                 .padding(.horizontal, 5)
                 .background(backgroundView)
                 .contentShape(Rectangle())
-                .animation(.easeInOut(duration: 0.1), value: debouncedDropTarget)
-                .animation(.easeInOut(duration: 0.1), value: isSelected)
+                .animation(IslandMotion.interaction, value: debouncedDropTarget)
+                .animation(IslandMotion.interaction, value: isSelected)
 
                 DraggableClickHandler(
                     item: item,
@@ -100,13 +100,13 @@ struct ShelfItemView: View {
             .aspectRatio(contentMode: .fit)
             .frame(width: 56, height: 56)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+            .shadow(color: IslandStyle.panelShadow.opacity(0.5), radius: 3, x: 0, y: 2)
     }
 
     private var textView: some View {
         Text(item.displayName)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.primary)
+            .foregroundStyle(Color.islandPrimaryText)
             .lineLimit(2)
             .truncationMode(.middle)
             .multilineTextAlignment(.center)
@@ -127,9 +127,9 @@ struct ShelfItemView: View {
 
     private var backgroundColor: Color {
         if debouncedDropTarget {
-            return Color.accentColor.opacity(0.25)
+            return Color.effectiveAccent.opacity(0.25)
         } else if isSelected {
-            return Color.accentColor.opacity(0.15)
+            return Color.effectiveAccent.opacity(0.15)
         } else {
             return Color.clear
         }
@@ -137,9 +137,9 @@ struct ShelfItemView: View {
 
     private var strokeColor: Color {
         if debouncedDropTarget {
-            return Color.accentColor.opacity(0.9)
+            return Color.effectiveAccent.opacity(0.9)
         } else if isSelected {
-            return Color.accentColor.opacity(0.8)
+            return Color.effectiveAccent.opacity(0.8)
         } else {
             return Color.clear
         }

@@ -13,6 +13,7 @@ struct ShelfView: View {
     @StateObject var tvm = ShelfStateViewModel.shared
     @StateObject var selection = ShelfSelectionModel.shared
     @StateObject private var quickLookService = QuickLookService()
+    @State private var confirmsClear = false
     private let spacing: CGFloat = 8
 
     var body: some View {
@@ -59,57 +60,156 @@ struct ShelfView: View {
     }
 
     var panel: some View {
-        RoundedRectangle(cornerRadius: 16)
-            .stroke(
-                vm.dragDetectorTargeting
-                    ? Color.accentColor.opacity(0.9)
-                    : Color.white.opacity(0.1),
-                style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [10])
-            )
+        RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+            .fill(Color.islandSurface)
             .overlay {
                 content
-                    .padding()
+                    .padding(IslandStyle.modulePadding)
             }
+            .overlay {
+                RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+                    .stroke(
+                        vm.dragDetectorTargeting
+                            ? Color.effectiveAccent.opacity(0.9)
+                            : Color.islandBorder,
+                        lineWidth: vm.dragDetectorTargeting ? 2 : 1
+                    )
+            }
+            .shadow(color: IslandStyle.panelShadow, radius: IslandStyle.panelShadowRadius, x: 0, y: 3)
+            .animation(IslandMotion.content, value: vm.dragDetectorTargeting)
             .transaction { transaction in
                 transaction.animation = vm.animation
             }
             .contentShape(Rectangle())
             .onTapGesture { selection.clear() }
+            .alert("Clear Shelf?", isPresented: $confirmsClear) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear", role: .destructive) {
+                    quickLookService.hide()
+                    tvm.removeAll()
+                    selection.clear()
+                }
+            } message: {
+                Text("Remove all files and links from Shelf?")
+            }
     }
 
     var content: some View {
         Group {
             if tvm.isEmpty {
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     Image(systemName: "tray.and.arrow.down")
                         .symbolVariant(.fill)
                         .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.white, .gray)
+                        .foregroundStyle(Color.islandSecondaryText, Color.islandBorder)
                         .imageScale(.large)
                     
-                    Text("Drop files here")
-                        .foregroundStyle(.gray)
-                        .font(.system(.title3, design: .rounded))
-                        .fontWeight(.medium)
-                }
-            } else {
-                ScrollView(.horizontal) {
-                    HStack(spacing: spacing) {
-                        ForEach(tvm.items) { item in
-                            ShelfItemView(item: item)
-                                .environmentObject(quickLookService)
-                        }
+                    Text("Shelf is empty")
+                        .foregroundStyle(Color.islandPrimaryText)
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    Text("Drop files or links here")
+                        .foregroundStyle(Color.islandSecondaryText)
+                        .font(.caption)
+                    if let dropErrorMessage = tvm.dropErrorMessage {
+                        Label(dropErrorMessage, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Color.islandWarning)
+                            .accessibilityLabel(dropErrorMessage)
                     }
                 }
-                .padding(-spacing)
-                .scrollIndicators(.never)
-                .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
-                    handleDrop(providers: providers)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Shelf is empty. Drop files or links here.")
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    shelfToolbar
+
+                    if let dropErrorMessage = tvm.dropErrorMessage {
+                        Label(dropErrorMessage, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Color.islandWarning)
+                            .accessibilityLabel(dropErrorMessage)
+                    }
+
+                    ScrollView(.horizontal) {
+                        HStack(spacing: spacing) {
+                            ForEach(tvm.items) { item in
+                                ShelfItemView(item: item)
+                                    .environmentObject(quickLookService)
+                            }
+                        }
+                    }
+                    .padding(-spacing)
+                    .scrollIndicators(.never)
+                    .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
+                        handleDrop(providers: providers)
+                    }
                 }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if tvm.isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(6)
+                    .accessibilityLabel("Adding items to Shelf")
             }
         }
         .onAppear {
             ShelfStateViewModel.shared.cleanupInvalidItems()
+        }
+    }
+
+    private var shelfToolbar: some View {
+        HStack(spacing: 6) {
+            Label("\(tvm.items.count) \(tvm.items.count == 1 ? "item" : "items")", systemImage: "tray.full")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.islandSecondaryText)
+
+            Spacer(minLength: 0)
+
+            if selection.hasSelection {
+                Button(role: .destructive) {
+                    selection.selectedItems(in: tvm.items).forEach(tvm.remove)
+                    selection.clear()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.delete, modifiers: [])
+                .help("Remove selected items")
+                .accessibilityLabel("Remove selected Shelf items")
+            }
+
+            Button {
+                selection.moveSelection(by: -1, in: tvm.items)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.leftArrow, modifiers: [.control])
+            .disabled(tvm.items.isEmpty)
+            .help("Select previous item")
+            .accessibilityLabel("Select previous Shelf item")
+
+            Button {
+                selection.moveSelection(by: 1, in: tvm.items)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.rightArrow, modifiers: [.control])
+            .disabled(tvm.items.isEmpty)
+            .help("Select next item")
+            .accessibilityLabel("Select next Shelf item")
+
+            Menu {
+                Button("Clear Shelf", role: .destructive) { confirmsClear = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Shelf actions")
+            .accessibilityLabel("Shelf actions")
         }
     }
 }

@@ -38,6 +38,8 @@ struct SettingsView: View {
                 Section("Features") {
                     NavigationLink(value: "Media") { Label("Media", systemImage: "play.laptopcomputer") }
                     NavigationLink(value: "Calendar") { Label("Calendar", systemImage: "calendar") }
+                    NavigationLink(value: "Timer") { Label("Timer", systemImage: "timer") }
+                    NavigationLink(value: "Weather") { Label("Weather", systemImage: "cloud.sun") }
                     NavigationLink(value: "HUD") { Label("HUDs", systemImage: "dial.medium.fill") }
                     NavigationLink(value: "Battery") { Label("Battery", systemImage: "battery.100.bolt") }
                     NavigationLink(value: "Shelf") { Label("Shelf", systemImage: "books.vertical") }
@@ -65,6 +67,10 @@ struct SettingsView: View {
                     Media()
                 case "Calendar":
                     CalendarSettings()
+                case "Timer":
+                    TimerSettings()
+                case "Weather":
+                    WeatherSettings()
                 case "HUD":
                     HUD()
                 case "Battery":
@@ -101,6 +107,107 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccentColorChanged"))) { _ in
             settingsAccent = .effectiveAccent
         }
+    }
+}
+
+private struct TimerSettings: View {
+    @Default(.timerCompletionNotifications) private var timerCompletionNotifications
+    @Default(.timerPresets) private var timerPresets
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @State private var presetName = ""
+    @State private var presetMinutes = 25
+
+    var body: some View {
+        Form {
+            Section("Timer") {
+                Defaults.Toggle(key: .timerCompletionNotifications) {
+                    Text("Notify when countdown finishes")
+                }
+                Text("MacIsland asks for notification permission only after you turn this on and start a countdown.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Custom presets") {
+                HStack {
+                    TextField("Name", text: $presetName)
+                    Stepper("\(presetMinutes) min", value: $presetMinutes, in: 1...1_440)
+                    Button("Add") {
+                        let preset = TimerPreset(name: presetName, seconds: TimeInterval(presetMinutes * 60))
+                        guard !preset.name.isEmpty else { return }
+                        timerPresets = timerPresets + [preset]
+                        presetName = ""
+                    }
+                    .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if timerPresets.isEmpty {
+                    Text("Add named countdowns for your routine.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(timerPresets) { preset in
+                        HStack {
+                            Text(preset.name)
+                            Spacer()
+                            Text(preset.durationLabel)
+                                .foregroundStyle(.secondary)
+                            Button("Delete", role: .destructive) {
+                                timerPresets.removeAll { $0.id == preset.id }
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Timer")
+        .onChange(of: timerCompletionNotifications) { _, _ in
+            coordinator.updateTimerNotificationPreference()
+        }
+    }
+}
+
+private struct WeatherSettings: View {
+    @Default(.weatherEnabled) private var weatherEnabled
+    @Default(.weatherLocationQuery) private var weatherLocationQuery
+    @Default(.weatherTemperatureUnit) private var weatherTemperatureUnit
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+
+    var body: some View {
+        Form {
+            Section("Weather") {
+                Defaults.Toggle(key: .weatherEnabled) {
+                    Text("Show weather on Home")
+                }
+                TextField("City", text: $weatherLocationQuery)
+                    .disabled(!weatherEnabled)
+                    .onSubmit { coordinator.refreshWeather(force: true) }
+                Picker("Temperature", selection: $weatherTemperatureUnit) {
+                    ForEach(WeatherTemperatureUnit.allCases) { unit in
+                        Text(unit.title).tag(unit)
+                    }
+                }
+                .disabled(!weatherEnabled)
+                Button("Refresh weather") { coordinator.refreshWeather(force: true) }
+                    .disabled(!weatherEnabled || weatherLocationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                switch coordinator.weatherStatus {
+                case .idle:
+                    Text("Weather is off.")
+                case .loading:
+                    Label("Updating weather…", systemImage: "arrow.triangle.2.circlepath")
+                case .ready:
+                    if let snapshot = coordinator.weatherSnapshot {
+                        Text("Updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
+                    }
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Weather")
+        .onAppear { coordinator.refreshWeather() }
+        .onChange(of: weatherEnabled) { _, _ in coordinator.refreshWeather() }
     }
 }
 
@@ -911,6 +1018,10 @@ struct Shelf: View {
     @Default(.shelfTapToOpen) var shelfTapToOpen: Bool
     @Default(.quickShareProvider) var quickShareProvider
     @Default(.expandedDragDetection) var expandedDragDetection: Bool
+    @Default(.clipboardHistoryEnabled) var clipboardHistoryEnabled: Bool
+    @Default(.clipboardHistoryLimit) var clipboardHistoryLimit: Int
+    @Default(.clipboardExcludedBundleIdentifiers) var clipboardExcludedBundleIdentifiers: String
+    @Default(.clipboardCaptureRichText) var clipboardCaptureRichText: Bool
     @StateObject private var quickShareService = QuickShareService.shared
 
     private var selectedProvider: QuickShareProvider? {
@@ -945,6 +1056,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .autoRemoveShelfItems) {
                     Text("Remove from shelf after dragging")
                 }
+                Text("Shelf keeps dropped files and links across relaunch using security-scoped access. Temporary representations are removed when MacIsland quits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
             } header: {
                 HStack {
@@ -1008,6 +1122,23 @@ struct Shelf: View {
                 Text("Choose which service to use when sharing files from the shelf. Click the shelf button to select files, or drag files onto it to share immediately.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section("Clipboard history") {
+                Defaults.Toggle(key: .clipboardHistoryEnabled) {
+                    Text("Capture copied text")
+                }
+                Stepper("Keep \(clipboardHistoryLimit) snippets", value: $clipboardHistoryLimit, in: 1...100)
+                    .disabled(!clipboardHistoryEnabled)
+                Defaults.Toggle(key: .clipboardCaptureRichText) {
+                    Text("Capture rich text representations")
+                }
+                .disabled(!clipboardHistoryEnabled)
+                TextField("Excluded bundle IDs (comma-separated)", text: $clipboardExcludedBundleIdentifiers)
+                    .disabled(!clipboardHistoryEnabled)
+                Text("Plain text is stored locally only after you turn this on. Rich text is ignored by default. Use bundle IDs such as `com.apple.Notes` to exclude apps.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .accentColor(.effectiveAccent)

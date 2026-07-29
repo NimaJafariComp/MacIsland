@@ -63,6 +63,15 @@ final class ShelfSelectionModel: ObservableObject {
         selectedIDs = Set(rangeIDs)
     }
 
+    func moveSelection(by offset: Int, in allItems: [ShelfItem]) {
+        guard !allItems.isEmpty, offset != 0 else { return }
+        let currentIndex = selectedIDs.compactMap { id in
+            allItems.firstIndex(where: { $0.id == id })
+        }.sorted().first
+        let targetIndex = min(max((currentIndex ?? (offset > 0 ? -1 : allItems.count)) + offset, 0), allItems.count - 1)
+        selectSingle(allItems[targetIndex])
+    }
+
     func clear() {
         selectedIDs.removeAll()
         lastAnchorID = nil

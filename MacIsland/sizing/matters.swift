@@ -34,6 +34,21 @@ enum IslandMotion {
     }
 }
 
+/// Physical-surface measurements shared by island modules. These intentionally
+/// stay quiet so the display hardware remains the visual signature.
+enum IslandStyle {
+    static let moduleCornerRadius: CGFloat = 16
+    static let controlCornerRadius: CGFloat = 12
+    static let modulePadding: CGFloat = 12
+    static let panelShadowRadius: CGFloat = 8
+
+    static var panelShadow: Color {
+        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            ? .clear
+            : .black.opacity(0.42)
+    }
+}
+
 let downloadSneakSize: CGSize = .init(width: 65, height: 1)
 let batterySneakSize: CGSize = .init(width: 160, height: 1)
 

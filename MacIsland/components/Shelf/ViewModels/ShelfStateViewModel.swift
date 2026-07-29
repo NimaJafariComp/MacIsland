@@ -16,6 +16,7 @@ final class ShelfStateViewModel: ObservableObject {
     }
 
     @Published var isLoading: Bool = false
+    @Published private(set) var dropErrorMessage: String?
 
     var isEmpty: Bool { items.isEmpty }
 
@@ -52,6 +53,11 @@ final class ShelfStateViewModel: ObservableObject {
         items.removeAll { $0.id == item.id }
     }
 
+    func removeAll() {
+        items.forEach { $0.cleanupStoredData() }
+        items = []
+    }
+
     func updateBookmark(for item: ShelfItem, bookmark: Data) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         if case .file = items[idx].kind {
@@ -84,10 +90,16 @@ final class ShelfStateViewModel: ObservableObject {
     func load(_ providers: [NSItemProvider]) {
         guard !providers.isEmpty else { return }
         isLoading = true
+        dropErrorMessage = nil
         Task { [weak self] in
             let dropped = await ShelfDropService.items(from: providers)
             await MainActor.run {
-                self?.add(dropped)
+                self?.add(dropped.items)
+                if dropped.rejectedCount > 0 {
+                    self?.dropErrorMessage = dropped.items.isEmpty
+                        ? "Couldn’t add the dropped item."
+                        : "Some dropped items could not be added."
+                }
                 self?.isLoading = false
             }
         }

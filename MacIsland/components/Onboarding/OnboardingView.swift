@@ -28,7 +28,7 @@ struct OnboardingView: View {
             switch step {
             case .welcome:
                 WelcomeView {
-                    withAnimation(.easeInOut(duration: 0.6)) {
+                    withAnimation(IslandMotion.content) {
                         step = .cameraPermission
                     }
                 }
@@ -43,13 +43,13 @@ struct OnboardingView: View {
                     onAllow: {
                         Task {
                             await requestCameraPermission()
-                            withAnimation(.easeInOut(duration: 0.6)) {
+                            withAnimation(IslandMotion.content) {
                                 step = .calendarPermission
                             }
                         }
                     },
                     onSkip: {
-                        withAnimation(.easeInOut(duration: 0.6)) {
+                        withAnimation(IslandMotion.content) {
                             step = .calendarPermission
                         }
                     }
@@ -65,13 +65,13 @@ struct OnboardingView: View {
                     onAllow: {
                         Task {
                                 await requestCalendarPermission()
-                                withAnimation(.easeInOut(duration: 0.6)) {
+                                withAnimation(IslandMotion.content) {
                                     step = .remindersPermission
                                 }
                         }
                     },
                     onSkip: {
-                            withAnimation(.easeInOut(duration: 0.6)) {
+                            withAnimation(IslandMotion.content) {
                                 step = .remindersPermission
                             }
                     }
@@ -87,13 +87,13 @@ struct OnboardingView: View {
                         onAllow: {
                             Task {
                                 await requestRemindersPermission()
-                                withAnimation(.easeInOut(duration: 0.6)) {
+                                withAnimation(IslandMotion.content) {
                                     step = .accessibilityPermission
                                 }
                             }
                         },
                         onSkip: {
-                            withAnimation(.easeInOut(duration: 0.6)) {
+                            withAnimation(IslandMotion.content) {
                                 step = .accessibilityPermission
                             }
                         }
@@ -109,13 +109,13 @@ struct OnboardingView: View {
                     onAllow: {
                         Task {
                             await requestAccessibilityPermission()
-                            withAnimation(.easeInOut(duration: 0.6)) {
+                            withAnimation(IslandMotion.content) {
                                 step = .musicPermission
                             }
                         }
                     },
                     onSkip: {
-                        withAnimation(.easeInOut(duration: 0.6)) {
+                        withAnimation(IslandMotion.content) {
                             step = .musicPermission
                         }
                     }

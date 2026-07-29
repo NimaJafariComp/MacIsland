@@ -46,6 +46,7 @@ struct BoringHeader: View {
                                     .animation(IslandMotion.content)
                             )
                     } else {
+                        TimerMenu()
                         if Defaults[.showMirror] {
                             Button(action: {
                                 vm.toggleCameraPreview()
@@ -100,6 +101,51 @@ struct BoringHeader: View {
             return true
         default:
             return false
+        }
+    }
+}
+
+private struct TimerMenu: View {
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @Default(.timerPresets) private var timerPresets
+
+    var body: some View {
+        Menu {
+            Button("Start 1 minute") { coordinator.startTimer(seconds: 60) }
+            Button("Start 5 minutes") { coordinator.startTimer(seconds: 5 * 60) }
+            Button("Start 15 minutes") { coordinator.startTimer(seconds: 15 * 60) }
+            if !timerPresets.isEmpty {
+                Divider()
+                ForEach(timerPresets) { preset in
+                    Button(preset.name) { coordinator.startTimer(seconds: preset.seconds) }
+                }
+            }
+            Button("Start stopwatch") { coordinator.startStopwatch() }
+
+            if coordinator.timerStatus == .running || coordinator.timerStatus == .paused {
+                Divider()
+                Button(coordinator.timerStatus == .running ? "Pause timer" : "Resume timer") {
+                    coordinator.toggleTimerPause()
+                }
+                Button("Stop timer", role: .destructive) { coordinator.stopTimer() }
+            } else if coordinator.timerStatus == .completed {
+                Divider()
+                Button("Dismiss timer") { coordinator.stopTimer() }
+            }
+        } label: {
+            IslandHeaderButton(icon: timerIcon)
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("Timer")
+        .help("Timer")
+    }
+
+    private var timerIcon: String {
+        switch coordinator.timerStatus {
+        case .running: "timer"
+        case .paused: "pause.circle"
+        case .completed: "bell.badge"
+        case .idle: "timer"
         }
     }
 }

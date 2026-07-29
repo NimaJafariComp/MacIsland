@@ -42,6 +42,14 @@ extension Color {
         Defaults[.islandTheme] == .contrast ? .white.opacity(0.78) : .white.opacity(0.58)
     }
 
+    static var islandPrimaryText: Color {
+        Defaults[.islandTheme] == .contrast ? .white : .white.opacity(0.92)
+    }
+
+    static var islandWarning: Color {
+        Defaults[.islandTheme] == .contrast ? .yellow : .orange
+    }
+
     static var effectiveAccent: Color {
         if Defaults[.useCustomAccentColor],
            let colorData = Defaults[.customAccentColorData],

@@ -42,19 +42,17 @@ struct FileShareView: View {
     private var dropArea: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    LinearGradient(colors: [Color.black.opacity(0.35), Color.black.opacity(0.20)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
+                .fill(Color.islandElevatedSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             vm.dropZoneTargeting
-                                ? Color.accentColor.opacity(0.9)
-                                : Color.white.opacity(0.1),
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [10])
+                                ? Color.effectiveAccent.opacity(0.9)
+                                : Color.islandBorder,
+                            lineWidth: vm.dropZoneTargeting ? 2 : 1
                         )
                 )
-                .shadow(color: Color.black.opacity(0.6), radius: 6, x: 0, y: 2)
+                .shadow(color: IslandStyle.panelShadow, radius: 5, x: 0, y: 2)
 
             // Content
             VStack(spacing: 5) {
@@ -75,18 +73,16 @@ struct FileShareView: View {
                         }
                     }
                     .frame(width: 34, height: 34)
-                        .foregroundStyle(
-                            vm.dropZoneTargeting ? Color.accentColor : Color.gray
-                        )
+                        .foregroundStyle(vm.dropZoneTargeting ? Color.effectiveAccent : Color.islandSecondaryText)
                         .scaleEffect(
                             vm.dropZoneTargeting ? 1.06 : 1.0
                         )
-                        .animation(.spring(response: 0.36, dampingFraction: 0.7), value: vm.dropZoneTargeting)
+                        .animation(IslandMotion.interaction, value: vm.dropZoneTargeting)
                 }
 
                 Text(selectedProvider.id)
-                    .font(.system(.headline, design: .rounded))
-                    .foregroundColor(.white.opacity(0.8))
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundColor(.white.opacity(0.86))
 
             }
             .padding(18)
@@ -103,6 +99,7 @@ struct FileShareView: View {
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityLabel("Share files with \(selectedProvider.id)")
     }
 
     // MARK: - Actions

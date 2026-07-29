@@ -10,16 +10,24 @@ import Foundation
 import UniformTypeIdentifiers
 
 struct ShelfDropService {
-    static func items(from providers: [NSItemProvider]) async -> [ShelfItem] {
+    struct Result {
+        let items: [ShelfItem]
+        let rejectedCount: Int
+    }
+
+    static func items(from providers: [NSItemProvider]) async -> Result {
         var results: [ShelfItem] = []
+        var rejectedCount = 0
 
         for provider in providers {
             if let item = await processProvider(provider) {
                 results.append(item)
+            } else {
+                rejectedCount += 1
             }
         }
 
-        return results
+        return Result(items: results, rejectedCount: rejectedCount)
     }
     
     private static func processProvider(_ provider: NSItemProvider) async -> ShelfItem? {
@@ -66,4 +74,3 @@ struct ShelfDropService {
         return (try? Bookmark(url: url))?.data
     }
 }
-

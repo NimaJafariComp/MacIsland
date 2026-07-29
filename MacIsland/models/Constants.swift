@@ -56,6 +56,34 @@ enum IslandTheme: String, CaseIterable, Identifiable, Defaults.Serializable {
     }
 }
 
+enum WeatherTemperatureUnit: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case celsius
+    case fahrenheit
+
+    var id: String { rawValue }
+    var title: String { self == .celsius ? "Celsius (°C)" : "Fahrenheit (°F)" }
+}
+
+struct TimerPreset: Codable, Hashable, Identifiable, Defaults.Serializable {
+    let id: UUID
+    let name: String
+    let seconds: TimeInterval
+
+    init(id: UUID = UUID(), name: String, seconds: TimeInterval) {
+        self.id = id
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.name = String(trimmed.prefix(40))
+        self.seconds = min(max(seconds, 60), 24 * 60 * 60)
+    }
+
+    var durationLabel: String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = seconds >= 3600 ? [.hour, .minute] : [.minute]
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: seconds) ?? "1 min"
+    }
+}
+
 // Define notification names at file scope
 extension Notification.Name {
     static let mediaControllerChanged = Notification.Name("mediaControllerChanged")
@@ -192,6 +220,21 @@ extension Defaults.Keys {
     static let copyOnDrag = Key<Bool>("copyOnDrag", default: false)
     static let autoRemoveShelfItems = Key<Bool>("autoRemoveShelfItems", default: false)
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)
+
+    // MARK: Clipboard history
+    static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: false)
+    static let clipboardHistoryLimit = Key<Int>("clipboardHistoryLimit", default: 20)
+    static let clipboardExcludedBundleIdentifiers = Key<String>("clipboardExcludedBundleIdentifiers", default: "")
+    static let clipboardCaptureRichText = Key<Bool>("clipboardCaptureRichText", default: false)
+
+    // MARK: Weather
+    static let weatherEnabled = Key<Bool>("weatherEnabled", default: false)
+    static let weatherLocationQuery = Key<String>("weatherLocationQuery", default: "")
+    static let weatherTemperatureUnit = Key<WeatherTemperatureUnit>("weatherTemperatureUnit", default: .celsius)
+
+    // MARK: Timer
+    static let timerCompletionNotifications = Key<Bool>("timerCompletionNotifications", default: false)
+    static let timerPresets = Key<[TimerPreset]>("timerPresets", default: [])
     
     // MARK: Calendar
     static let calendarSelectionState = Key<CalendarSelectionState>("calendarSelectionState", default: .all)

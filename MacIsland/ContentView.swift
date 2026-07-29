@@ -11,6 +11,18 @@ import KeyboardShortcuts
 import SwiftUI
 import SwiftUIIntrospect
 
+private enum IslandScene {
+    case onboarding
+    case battery
+    case systemHUD
+    case timer
+    case media
+    case face
+    case home
+    case shelf
+    case collapsed
+}
+
 @MainActor
 struct ContentView: View {
     @EnvironmentObject var vm: BoringViewModel
@@ -55,23 +67,62 @@ struct ContentView: View {
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
-        if coordinator.expandingView.type == .battery && coordinator.expandingView.show
-            && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
-        {
+        switch islandScene {
+        case .battery:
             chinWidth = 640
-        } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
-            && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
-            && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
-        {
+        case .timer:
+            chinWidth += 140
+        case .media, .face:
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
-        } else if !coordinator.expandingView.show && vm.notchState == .closed
-            && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace]
-            && !vm.hideOnClosed
-        {
-            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+        default:
+            break
         }
 
         return chinWidth
+    }
+
+    private var islandScene: IslandScene {
+        if coordinator.helloAnimationRunning { return .onboarding }
+
+        if vm.notchState == .open {
+            return coordinator.currentView == .shelf ? .shelf : .home
+        }
+
+        if coordinator.expandingView.type == .battery,
+           coordinator.expandingView.show,
+           Defaults[.showPowerStatusNotifications]
+        {
+            return .battery
+        }
+
+        if coordinator.sneakPeek.show,
+           Defaults[.inlineHUD],
+           coordinator.sneakPeek.type != .music,
+           coordinator.sneakPeek.type != .battery
+        {
+            return .systemHUD
+        }
+
+        if coordinator.timerStatus.isVisible, !vm.hideOnClosed { return .timer }
+
+        if (!coordinator.expandingView.show || coordinator.expandingView.type == .music),
+           (musicManager.isPlaying || !musicManager.isPlayerIdle),
+           coordinator.musicLiveActivityEnabled,
+           !vm.hideOnClosed
+        {
+            return .media
+        }
+
+        if !coordinator.expandingView.show,
+           !musicManager.isPlaying,
+           musicManager.isPlayerIdle,
+           Defaults[.showNotHumanFace],
+           !vm.hideOnClosed
+        {
+            return .face
+        }
+
+        return .collapsed
     }
 
     var body: some View {
@@ -84,32 +135,16 @@ struct ContentView: View {
         
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
-                let mainLayout = NotchLayout()
-                    .frame(alignment: .top)
-                    .padding(
-                        .horizontal,
-                        vm.notchState == .open
-                        ? Defaults[.cornerRadiusScaling]
-                        ? (cornerRadiusInsets.opened.top) : (cornerRadiusInsets.opened.bottom)
-                        : cornerRadiusInsets.closed.bottom
-                    )
-                    .padding([.horizontal, .bottom], vm.notchState == .open ? 12 : 0)
-                    .background(.black)
-                    .clipShape(currentNotchShape)
-                    .overlay(alignment: .top) {
-                        Rectangle()
-                            .fill(.black)
-                            .frame(height: 1)
-                            .padding(.horizontal, topCornerRadius)
-                    }
-                    .shadow(
-                        color: ((vm.notchState == .open || isHovering) && Defaults[.enableShadow])
-                            ? .black.opacity(0.7) : .clear, radius: Defaults[.cornerRadiusScaling] ? 6 : 4
-                    )
-                    .padding(
-                        .bottom,
-                        vm.effectiveClosedNotchHeight == 0 ? 10 : 0
-                    )
+                let mainLayout = IslandSurface(
+                    isOpen: vm.notchState == .open,
+                    isHovering: isHovering,
+                    closedHeight: vm.effectiveClosedNotchHeight,
+                    cornerRadiusScaling: Defaults[.cornerRadiusScaling],
+                    shape: currentNotchShape,
+                    topCornerRadius: topCornerRadius
+                ) {
+                    NotchLayout()
+                }
                 
                 mainLayout
                     .frame(height: vm.notchState == .open ? vm.notchSize.height : nil)
@@ -253,7 +288,8 @@ struct ContentView: View {
     func NotchLayout() -> some View {
         VStack(alignment: .leading) {
             VStack(alignment: .leading) {
-                if coordinator.helloAnimationRunning {
+                switch islandScene {
+                case .onboarding:
                     Spacer()
                     HelloAnimation(onFinish: {
                         vm.closeHello()
@@ -263,51 +299,26 @@ struct ContentView: View {
                     )
                     .padding(.top, 40)
                     Spacer()
-                } else {
-                    if coordinator.expandingView.type == .battery && coordinator.expandingView.show
-                        && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
-                    {
-                        HStack(spacing: 0) {
-                            HStack {
-                                Text(batteryModel.statusText)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.white)
-                            }
+                case .battery:
+                    BatteryLiveActivity()
+                case .systemHUD:
+                    InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
+                        .transition(.opacity)
+                case .timer:
+                    TimerLiveActivity()
+                case .media:
+                    MusicLiveActivity().frame(alignment: .center)
+                case .face:
+                    BoringFaceAnimation()
+                case .home, .shelf:
+                    BoringHeader()
+                        .frame(height: max(24, vm.effectiveClosedNotchHeight))
+                        .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+                case .collapsed:
+                    Rectangle().fill(.clear).frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
+                }
 
-                            Rectangle()
-                                .fill(.black)
-                                .frame(width: vm.closedNotchSize.width + 10)
-
-                            HStack {
-                                BoringBatteryView(
-                                    batteryWidth: 30,
-                                    isCharging: batteryModel.isCharging,
-                                    isInLowPowerMode: batteryModel.isInLowPowerMode,
-                                    isPluggedIn: batteryModel.isPluggedIn,
-                                    levelBattery: batteryModel.levelBattery,
-                                    isForNotification: true
-                                )
-                            }
-                            .frame(width: 76, alignment: .trailing)
-                        }
-                        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
-                      } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
-                          InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
-                              .transition(.opacity)
-                      } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
-                          MusicLiveActivity()
-                              .frame(alignment: .center)
-                      } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
-                          BoringFaceAnimation()
-                       } else if vm.notchState == .open {
-                           BoringHeader()
-                               .frame(height: max(24, vm.effectiveClosedNotchHeight))
-                               .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
-                       } else {
-                           Rectangle().fill(.clear).frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
-                       }
-
-                      if coordinator.sneakPeek.show {
+                if coordinator.sneakPeek.show {
                           if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && !Defaults[.inlineHUD] && vm.notchState == .closed {
                               SystemEventIndicatorModifier(
                                   eventType: $coordinator.sneakPeek.type,
@@ -343,7 +354,6 @@ struct ContentView: View {
                           }
                       }
                   }
-              }
               .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
                   view
                       .fixedSize()
@@ -356,6 +366,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .clipboard:
+                        ClipboardHistoryView()
                     }
                 }
                 .transition(
@@ -369,6 +381,32 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
+    }
+
+    @ViewBuilder
+    func BatteryLiveActivity() -> some View {
+        HStack(spacing: 0) {
+            Text(batteryModel.statusText)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width + 10)
+
+            BoringBatteryView(
+                batteryWidth: 30,
+                isCharging: batteryModel.isCharging,
+                isInLowPowerMode: batteryModel.isInLowPowerMode,
+                isPluggedIn: batteryModel.isPluggedIn,
+                levelBattery: batteryModel.levelBattery,
+                isForNotification: true
+            )
+            .frame(width: 76, alignment: .trailing)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(batteryModel.statusText)
     }
 
     @ViewBuilder
@@ -496,6 +534,41 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    func TimerLiveActivity() -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: coordinator.timerStatus == .completed ? "bell.fill" : "timer")
+                .foregroundStyle(coordinator.timerStatus == .completed ? Color.effectiveAccent : .white)
+
+            Text(timerText)
+                .font(.system(.subheadline, design: .rounded).monospacedDigit().weight(.semibold))
+
+            if coordinator.timerStatus == .completed {
+                Button("Done") { coordinator.stopTimer() }
+                    .buttonStyle(.borderless)
+            } else {
+                Button(coordinator.timerStatus == .running ? "Pause" : "Resume") {
+                    coordinator.toggleTimerPause()
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Timer, \(timerText)")
+    }
+
+    private var timerText: String {
+        if coordinator.timerStatus == .completed { return "Time's up" }
+        let duration = coordinator.timerMode == .stopwatch
+            ? coordinator.stopwatchElapsed
+            : coordinator.timerRemaining
+        let totalSeconds = max(0, Int(duration.rounded(.up)))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+
+    @ViewBuilder
     var dragDetector: some View {
         if Defaults[.boringShelf] && vm.notchState == .closed {
             Color.clear
@@ -618,6 +691,78 @@ struct ContentView: View {
     }
 }
 
+private struct ClipboardHistoryView: View {
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @State private var query = ""
+
+    private var entries: [ClipboardEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return coordinator.clipboardEntries }
+        return coordinator.clipboardEntries.filter {
+            $0.text.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Snippets", systemImage: "doc.on.clipboard")
+                    .font(.headline)
+                Spacer()
+                if !coordinator.clipboardEntries.isEmpty {
+                    Button("Clear") { coordinator.clearClipboardHistory() }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Clear clipboard history")
+                }
+            }
+
+            if Defaults[.clipboardHistoryEnabled] {
+                TextField("Search copied text", text: $query)
+                    .textFieldStyle(.roundedBorder)
+
+                if entries.isEmpty {
+                    ContentUnavailableView("No snippets yet", systemImage: "doc.on.clipboard", description: Text("Copy text to add it here."))
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 6) {
+                            ForEach(entries) { entry in
+                                HStack(spacing: 8) {
+                                    Text(entry.text)
+                                        .lineLimit(2)
+                                        .truncationMode(.tail)
+                                    Spacer(minLength: 8)
+                                    Button("Copy") { coordinator.pasteClipboardEntry(entry) }
+                                        .buttonStyle(.borderless)
+                                    Button(role: .destructive) {
+                                        coordinator.removeClipboardEntry(entry)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Delete snippet")
+                                }
+                                .padding(8)
+                                .background(Color.islandElevatedSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 120)
+                }
+            } else {
+                ContentUnavailableView("Clipboard history is off", systemImage: "lock", description: Text("Enable it in Shelf settings to capture copied text."))
+            }
+        }
+        .padding(IslandStyle.modulePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.islandSurface, in: RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
+                .stroke(Color.islandBorder, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 struct FullScreenDropDelegate: DropDelegate {
     @Binding var isTargeted: Bool
     let onDrop: () -> Void
@@ -636,6 +781,44 @@ struct FullScreenDropDelegate: DropDelegate {
         return true
     }
 
+}
+
+private struct IslandSurface<Content: View>: View {
+    let isOpen: Bool
+    let isHovering: Bool
+    let closedHeight: CGFloat
+    let cornerRadiusScaling: Bool
+    let shape: NotchShape
+    let topCornerRadius: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .frame(alignment: .top)
+            .padding(.horizontal, horizontalInset)
+            .padding([.horizontal, .bottom], isOpen ? 12 : 0)
+            .background(.black)
+            .clipShape(shape)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(.black)
+                    .frame(height: 1)
+                    .padding(.horizontal, topCornerRadius)
+            }
+            .shadow(
+                color: ((isOpen || isHovering) && Defaults[.enableShadow])
+                    ? .black.opacity(0.7) : .clear,
+                radius: cornerRadiusScaling ? 6 : 4
+            )
+            .padding(.bottom, closedHeight == 0 ? 10 : 0)
+    }
+
+    private var horizontalInset: CGFloat {
+        if isOpen {
+            return cornerRadiusScaling ? cornerRadiusInsets.opened.top : cornerRadiusInsets.opened.bottom
+        }
+        return cornerRadiusInsets.closed.bottom
+    }
 }
 
 struct GeneralDropTargetDelegate: DropDelegate {

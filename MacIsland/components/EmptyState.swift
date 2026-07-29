@@ -17,10 +17,11 @@ struct EmptyStateView: View {
             Text(message)
                 .font(.system(size:14))
                 .foregroundColor(.gray)
-        }.transition(.blurReplace.animation(.spring(.bouncy(duration: 0.3)))) // Smooth animation
+        }
+        .transition(.blurReplace.animation(IslandMotion.content))
     }
 }
 
 #Preview {
-    EmptyStateView(message: "Play some music babies")
+    EmptyStateView(message: "Start audio to see controls")
 }

@@ -7,6 +7,20 @@ battery state, gestures, and native system HUDs in a notch-aware panel.
 The native rebuild is in progress. See [PLAN.md](PLAN.md) for scope, design
 rules, validation gates, and current status.
 
+## Visual quality references
+
+MacIsland uses Alcove and Perch as quality references for behavior, native
+integration, motion restraint, and feature coverage—not as sources of artwork,
+copy, layouts, or bundled assets.
+
+- [Perch — official App Store page](https://apps.apple.com/us/app/dynamic-notch-island-perch/id6742724228?mt=12)
+- [Alcove — official site](https://tryalcove.com/)
+- [MacIsland visual acceptance ledger](fixed.md)
+
+Reference screenshots remain on their official pages. This repository does not
+copy or hotlink third-party product artwork; comparison captures belong in the
+approved visual-test record once the macOS UI-test host has Assistive Access.
+
 ## Build the native app
 
 Requirements:

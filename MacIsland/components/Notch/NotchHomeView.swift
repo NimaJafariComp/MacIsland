@@ -402,7 +402,7 @@ struct VolumeControlView: View {
         HStack(spacing: 4) {
             Button(action: {
                 if musicManager.volumeControlSupported {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    withAnimation(IslandMotion.interaction) {
                         showVolumeSlider.toggle()
                     }
                 }
@@ -445,7 +445,7 @@ struct VolumeControlView: View {
         }
         .onReceive(musicManager.$volumeControlSupported) { supported in
             if !supported {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(IslandMotion.interaction) {
                     showVolumeSlider = false
                 }
             }
@@ -516,32 +516,89 @@ struct NotchHomeView: View {
     }
 
     private var mainContent: some View {
-        HStack(alignment: .top, spacing: 10) {
-            MusicPlayerView(albumArtNamespace: albumArtNamespace)
-                .frame(minWidth: musicMinimumWidth, maxWidth: .infinity)
-
-            if Defaults[.showCalendar] {
-                HomeCalendarCard()
-                    .frame(width: calendarWidth)
-                    .onHover { isHovering in
-                        vm.isHoveringCalendar = isHovering
-                    }
-                    .environmentObject(vm)
-                    .transition(.opacity)
+        VStack(spacing: 6) {
+            if Defaults[.weatherEnabled] {
+                HomeWeatherModule()
             }
+            HStack(alignment: .top, spacing: 10) {
+                MusicPlayerView(albumArtNamespace: albumArtNamespace)
+                    .frame(minWidth: musicMinimumWidth, maxWidth: .infinity)
 
-            if shouldShowCamera {
-                CameraPreviewView(webcamManager: webcamManager)
-                    .frame(width: 112, height: 132)
-                    .opacity(vm.notchState == .closed ? 0 : 1)
-                    .blur(radius: vm.notchState == .closed ? 20 : 0)
-                    .animation(IslandMotion.content, value: shouldShowCamera)
+                if Defaults[.showCalendar] {
+                    HomeCalendarCard()
+                        .frame(width: calendarWidth)
+                        .onHover { isHovering in
+                            vm.isHoveringCalendar = isHovering
+                        }
+                        .environmentObject(vm)
+                        .transition(.opacity)
+                }
+
+                if shouldShowCamera {
+                    CameraPreviewView(webcamManager: webcamManager)
+                        .frame(width: 112, height: 132)
+                        .opacity(vm.notchState == .closed ? 0 : 1)
+                        .blur(radius: vm.notchState == .closed ? 20 : 0)
+                        .animation(IslandMotion.content, value: shouldShowCamera)
+                }
             }
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 4)
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
         .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
+}
+
+private struct HomeWeatherModule: View {
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+
+    var body: some View {
+        Group {
+            switch coordinator.weatherStatus {
+            case .ready:
+                if let snapshot = coordinator.weatherSnapshot {
+                    Label(
+                        "\(snapshot.location) · \(snapshot.formattedTemperature(in: Defaults[.weatherTemperatureUnit])) · \(weatherDescription(for: snapshot.weatherCode))",
+                        systemImage: weatherSymbol(for: snapshot.weatherCode)
+                    )
+                }
+            case .loading:
+                Label("Updating weather…", systemImage: "arrow.triangle.2.circlepath")
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle")
+            case .idle:
+                Label("Choose a city in Settings", systemImage: "cloud.sun")
+            }
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(Color.islandSecondaryText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { coordinator.refreshWeather() }
+    }
+
+    private func weatherSymbol(for code: Int) -> String {
+        switch code {
+        case 0: "sun.max.fill"
+        case 1...3: "cloud.sun.fill"
+        case 45, 48: "cloud.fog.fill"
+        case 51...67, 80...82: "cloud.rain.fill"
+        case 71...77, 85...86: "cloud.snow.fill"
+        case 95...99: "cloud.bolt.rain.fill"
+        default: "cloud.fill"
+        }
+    }
+
+    private func weatherDescription(for code: Int) -> String {
+        switch code {
+        case 0: "Clear"
+        case 1...3: "Partly cloudy"
+        case 45, 48: "Fog"
+        case 51...67, 80...82: "Rain"
+        case 71...77, 85...86: "Snow"
+        case 95...99: "Thunderstorm"
+        default: "Cloudy"
+        }
     }
 }
 
@@ -651,7 +708,7 @@ struct CustomSlider: View {
                         lastDragged = Date()
                     }
             )
-            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: dragging)
+            .animation(IslandMotion.interaction, value: dragging)
         }
     }
 }
