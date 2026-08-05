@@ -12,8 +12,13 @@ final class ShelfStateViewModel: ObservableObject {
     static let shared = ShelfStateViewModel()
 
     @Published private(set) var items: [ShelfItem] = [] {
-        didSet { ShelfPersistenceService.shared.save(items) }
+        didSet {
+            // UI audit fixtures must never replace the user's persisted Shelf.
+            guard !isUsingAuditItems else { return }
+            ShelfPersistenceService.shared.save(items)
+        }
     }
+    private var isUsingAuditItems = false
 
     @Published var isLoading: Bool = false
     @Published private(set) var dropErrorMessage: String?
@@ -46,6 +51,13 @@ final class ShelfStateViewModel: ObservableObject {
             }
         }
         items = merged
+    }
+
+    /// Installs non-persistent, process-local Shelf data for visual QA.
+    func useAuditItems(_ auditItems: [ShelfItem]) {
+        isUsingAuditItems = true
+        items = auditItems
+        dropErrorMessage = nil
     }
 
     func remove(_ item: ShelfItem) {

@@ -19,7 +19,12 @@ enum PanDirection {
 }
 
 extension View {
-    func panGesture(direction: PanDirection, threshold: CGFloat = 4, action: @escaping (CGFloat, NSEvent.Phase) -> Void) -> some View {
+    func panGesture(
+        direction: PanDirection,
+        threshold: CGFloat = 4,
+        capturesScrollWheel: Bool = true,
+        action: @escaping (CGFloat, NSEvent.Phase) -> Void
+    ) -> some View {
         self
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -30,7 +35,11 @@ extension View {
                     }
                     .onEnded { _ in action(0, .ended) }
             )
-            .background(ScrollMonitor(direction: direction, threshold: threshold, action: action))
+            .background {
+                if capturesScrollWheel {
+                    ScrollMonitor(direction: direction, threshold: threshold, action: action)
+                }
+            }
     }
 }
 

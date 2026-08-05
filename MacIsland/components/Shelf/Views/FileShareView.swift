@@ -59,7 +59,7 @@ struct FileShareView: View {
                 ZStack {
                     Circle()
                         .fill(vm.dropZoneTargeting ? Color.islandPressedSurface : Color.islandElevatedSurface)
-                        .frame(width: 55, height: 55)
+                        .frame(width: 48, height: 48)
                     Image(systemName: "square.and.arrow.up")
                     Group {
                         if let imgData = selectedProvider.imageData, let nsImg = NSImage(data: imgData) {
@@ -70,7 +70,7 @@ struct FileShareView: View {
                             Image(systemName: "square.and.arrow.up")
                         }
                     }
-                    .frame(width: 34, height: 34)
+                    .frame(width: 30, height: 30)
                         .foregroundStyle(vm.dropZoneTargeting ? Color.islandFocus : Color.islandSecondaryText)
                         .scaleEffect(
                             vm.dropZoneTargeting ? 1.06 : 1.0
@@ -78,12 +78,12 @@ struct FileShareView: View {
                         .animation(IslandMotion.interaction, value: vm.dropZoneTargeting)
                 }
 
-                Text(selectedProvider.id)
+                Text("Share")
                     .font(IslandTypography.title)
                     .foregroundColor(Color.islandPrimaryText)
 
             }
-            .padding(18)
+            .padding(12)
             
             // Loading overlay
             if isProcessing || quickShare.isPickerOpen {

@@ -34,7 +34,7 @@ struct BoringHeader: View {
         .foregroundColor(Color.islandSecondaryText)
         .opacity(vm.notchState == .closed ? 0 : 1)
         .blur(radius: vm.notchState == .closed ? 8 : 0)
-        .animation(IslandMotion.content, value: vm.notchState)
+        .animation(IslandMotion.islandOpenClose, value: vm.notchState)
         .environmentObject(vm)
     }
 
@@ -44,7 +44,7 @@ struct BoringHeader: View {
 
     @ViewBuilder
     private var headerTabs: some View {
-        if (!tvm.isEmpty || coordinator.alwaysShowTabs) && Defaults[.boringShelf] {
+        if (!tvm.isEmpty || coordinator.alwaysShowTabs) && (Defaults[.boringShelf] || UIAuditMode.isEnabled) {
             TabSelectionView()
         }
     }
@@ -127,9 +127,11 @@ private struct TimerMenu: View {
 
     var body: some View {
         Menu {
-            Button("Start 1 minute") { startCountdown(seconds: 60) }
             Button("Start 5 minutes") { startCountdown(seconds: 5 * 60) }
-            Button("Start 15 minutes") { startCountdown(seconds: 15 * 60) }
+            Button("Start 10 minutes") { startCountdown(seconds: 10 * 60) }
+            Button("Start 25 minutes") { startCountdown(seconds: 25 * 60) }
+            Button("Start 45 minutes") { startCountdown(seconds: 45 * 60) }
+            Button("Start 1 hour") { startCountdown(seconds: 60 * 60) }
             if !timerPresets.isEmpty {
                 Divider()
                 ForEach(timerPresets) { preset in

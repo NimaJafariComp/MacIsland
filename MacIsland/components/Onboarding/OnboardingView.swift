@@ -7,13 +7,17 @@
 
 import SwiftUI
 import AVFoundation
+import AppKit
 
 enum OnboardingStep {
     case welcome
     case cameraPermission
     case calendarPermission
     case remindersPermission
+    case locationPermission
+    case notificationsPermission
     case accessibilityPermission
+    case connectedAppsPermission
     case musicPermission
     case finished
 }
@@ -88,17 +92,61 @@ struct OnboardingView: View {
                             Task {
                                 await requestRemindersPermission()
                                 withAnimation(IslandMotion.content) {
-                                    step = .accessibilityPermission
+                                step = .locationPermission
                                 }
                             }
                         },
                         onSkip: {
                             withAnimation(IslandMotion.content) {
-                                step = .accessibilityPermission
+                                step = .locationPermission
                             }
                         }
                     )
                     .transition(.opacity)
+
+            case .locationPermission:
+                PermissionRequestView(
+                    icon: Image(systemName: "location.fill"),
+                    title: "Enable Location Access",
+                    description: "MacIsland uses your current location to show local weather automatically. You can choose a city manually at any time.",
+                    privacyNote: "Your location is used only to fetch weather for this Mac and is never shared.",
+                    onAllow: {
+                        Task {
+                            await requestLocationPermission()
+                            withAnimation(IslandMotion.content) {
+                                step = .notificationsPermission
+                            }
+                        }
+                    },
+                    onSkip: {
+                        withAnimation(IslandMotion.content) {
+                            step = .notificationsPermission
+                        }
+                    }
+                )
+                .transition(.opacity)
+
+            case .notificationsPermission:
+                PermissionRequestView(
+                    icon: Image(systemName: "bell.badge.fill"),
+                    title: "Enable Notifications",
+                    description: "MacIsland can notify you when a timer finishes, even if the island is not visible.",
+                    privacyNote: "Notifications are used only for MacIsland features that you turn on.",
+                    onAllow: {
+                        Task {
+                            await requestNotificationPermission()
+                            withAnimation(IslandMotion.content) {
+                                step = .accessibilityPermission
+                            }
+                        }
+                    },
+                    onSkip: {
+                        withAnimation(IslandMotion.content) {
+                            step = .accessibilityPermission
+                        }
+                    }
+                )
+                .transition(.opacity)
                 
             case .accessibilityPermission:
                 PermissionRequestView(
@@ -109,6 +157,28 @@ struct OnboardingView: View {
                     onAllow: {
                         Task {
                             await requestAccessibilityPermission()
+                            withAnimation(IslandMotion.content) {
+                                step = .connectedAppsPermission
+                            }
+                        }
+                    },
+                    onSkip: {
+                        withAnimation(IslandMotion.content) {
+                            step = .connectedAppsPermission
+                        }
+                    }
+                )
+                .transition(.opacity)
+
+            case .connectedAppsPermission:
+                PermissionRequestView(
+                    icon: Image(systemName: "link.badge.plus"),
+                    title: "Connect Notes and Media Apps",
+                    description: "MacIsland can save Quick Notes to Notes and control the media provider you choose, including Spotify or Apple Music.",
+                    privacyNote: "MacIsland only reads the connected app's version during setup. macOS remembers your decision for this installed, signed app, so allowed features do not ask again.",
+                    onAllow: {
+                        Task {
+                            await requestConnectedAppsPermission()
                             withAnimation(IslandMotion.content) {
                                 step = .musicPermission
                             }
@@ -153,8 +223,28 @@ struct OnboardingView: View {
     func requestRemindersPermission() async {
         await CalendarManager.shared.requestReminderAccess()
     }
+
+    func requestLocationPermission() async {
+        await BoringViewCoordinator.shared.requestWeatherLocationPermission()
+    }
+
+    func requestNotificationPermission() async {
+        await BoringViewCoordinator.shared.requestTimerNotificationPermission()
+    }
     
     func requestAccessibilityPermission() async {
         await XPCHelperClient.shared.ensureAccessibilityAuthorization(promptIfNeeded: true)
+    }
+
+    /// macOS Automation consent is scoped to the installed app identity and
+    /// target app. A read-only version query primes the same consent that
+    /// Notes, Spotify, and Music features later use without changing user data.
+    func requestConnectedAppsPermission() async {
+        let bundleIdentifiers = ["com.apple.Notes", "com.apple.Music", "com.spotify.client"]
+        for bundleIdentifier in bundleIdentifiers where NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil {
+            _ = try? await AppleScriptHelper.execute(
+                "tell application id \"\(bundleIdentifier)\" to get version"
+            )
+        }
     }
 }

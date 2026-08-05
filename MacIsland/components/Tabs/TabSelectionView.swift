@@ -16,21 +16,28 @@ struct TabModel: Identifiable {
 
 let tabs = [
     TabModel(label: "Home", icon: "house.fill", view: .home),
+    TabModel(label: "Mirror", icon: "camera", view: .mirror),
     TabModel(label: "Shelf", icon: "tray.fill", view: .shelf),
-    TabModel(label: "Snippets", icon: "doc.on.clipboard", view: .clipboard)
+    TabModel(label: "Snippets", icon: "doc.on.clipboard", view: .clipboard),
+    TabModel(label: "Notes", icon: "note.text", view: .notes)
 ]
 
 struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @EnvironmentObject private var vm: BoringViewModel
     @Namespace var animation
     var body: some View {
         HStack(spacing: 2) {
             ForEach(tabs) { tab in
-                    TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
-                        withAnimation(IslandMotion.content) {
-                            coordinator.currentView = tab.view
-                        }
+                    TabButton(
+                        label: tab.label,
+                        icon: tab.icon,
+                        selected: coordinator.currentView == tab.view,
+                        width: 30
+                    ) {
+                        vm.selectOpenPage(tab.view)
                     }
+                    .accessibilityIdentifier("macisland.tab.\(tab.label.lowercased())")
                     .frame(height: IslandStyle.minimumHitTarget)
                     .foregroundStyle(tab.view == coordinator.currentView ? Color.islandPrimaryText : Color.islandSecondaryText)
                     .background {

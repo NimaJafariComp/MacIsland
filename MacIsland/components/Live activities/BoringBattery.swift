@@ -1,5 +1,53 @@
 import SwiftUI
 import Defaults
+import IOKit
+
+/// Battery health is distinct from the current charge ceiling reported by
+/// IOPowerSources. Read the same design/full-capacity values macOS uses for
+/// Battery Health, and leave the value unavailable on desktops or unsupported
+/// hardware rather than inventing a percentage.
+private struct BatteryHealthSnapshot {
+    let maximumCapacityPercent: Int?
+    let cycleCount: Int?
+
+    static var current: BatteryHealthSnapshot {
+        let matching = IOServiceMatching("AppleSmartBattery")
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
+        guard service != IO_OBJECT_NULL else {
+            return BatteryHealthSnapshot(maximumCapacityPercent: nil, cycleCount: nil)
+        }
+        defer { IOObjectRelease(service) }
+
+        var unmanagedProperties: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &unmanagedProperties, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let properties = unmanagedProperties?.takeRetainedValue() as? [String: Any]
+        else {
+            return BatteryHealthSnapshot(maximumCapacityPercent: nil, cycleCount: nil)
+        }
+
+        // Newer Macs keep the milliamphour values in `BatteryData`; the root
+        // `MaxCapacity` is the current percentage scale (usually 100), not
+        // battery health.
+        let batteryData = properties["BatteryData"] as? [String: Any]
+        let designCapacity = (batteryData?["DesignCapacity"] as? NSNumber)?.doubleValue
+        // `NominalChargeCapacity` is macOS's calibrated health capacity.
+        // `FullChargeCapacity` is a raw live value and can under-report the
+        // Maximum Capacity shown in System Settings.
+        let fullChargeCapacity = (
+            (batteryData?["NominalChargeCapacity"] as? NSNumber)
+                ?? (batteryData?["FullChargeCapacity"] as? NSNumber)
+                ?? (batteryData?["AppleRawMaxCapacity"] as? NSNumber)
+        )?.doubleValue
+        let health: Int?
+        if let designCapacity, let fullChargeCapacity, designCapacity > 0 {
+            health = Int((fullChargeCapacity / designCapacity * 100).rounded())
+        } else {
+            health = nil
+        }
+        let cycles = (properties["CycleCount"] as? NSNumber)?.intValue
+        return BatteryHealthSnapshot(maximumCapacityPercent: health, cycleCount: cycles)
+    }
+}
 
 /// A view that displays the battery status with an icon and charging indicator.
 struct BatteryView: View {
@@ -96,12 +144,13 @@ struct BatteryMenuView: View {
     var onDismiss: () -> Void
 
     @Environment(\.openURL) private var openURL
+    @State private var health = BatteryHealthSnapshot.current
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
 
             HStack {
-                Text("Battery Status")
+                Label("Battery", systemImage: "battery.100percent")
                     .font(IslandTypography.title)
                     .fontWeight(.semibold)
                 Spacer()
@@ -110,55 +159,70 @@ struct BatteryMenuView: View {
                     .fontWeight(.semibold)
             }
             
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Max Capacity: \(Int(maxCapacity))%")
-                    .font(IslandTypography.body)
-                    .fontWeight(.regular)
+            VStack(alignment: .leading, spacing: 10) {
+                batteryRow(
+                    title: "Battery Health",
+                    value: health.maximumCapacityPercent.map { "\($0)% maximum capacity" } ?? "Unavailable",
+                    symbol: "heart.text.square"
+                )
+                if let cycles = health.cycleCount {
+                    batteryRow(title: "Cycle Count", value: "\(cycles)", symbol: "arrow.triangle.2.circlepath")
+                }
+                batteryRow(
+                    title: "Power Mode",
+                    value: isInLowPowerMode ? "Low Power Mode" : "Standard",
+                    symbol: isInLowPowerMode ? "bolt.fill" : "bolt"
+                )
+                batteryRow(
+                    title: "Power Source",
+                    value: isCharging
+                        ? (timeToFullCharge > 0 ? "Charging · \(timeToFullCharge) min remaining" : "Charging")
+                        : (isPluggedIn ? "Power adapter connected" : "Battery"),
+                    symbol: isCharging ? "bolt.fill" : (isPluggedIn ? "powerplug.fill" : "battery.50")
+                )
+
                 if isInLowPowerMode {
-                    Label("Low Power Mode", systemImage: "bolt.circle")
-                        .font(IslandTypography.body)
-                        .fontWeight(.regular)
+                    Label("Performance and background activity are limited", systemImage: "speedometer")
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(Color.islandSecondaryText)
                 }
-                if isCharging {
-                    Label("Charging", systemImage: "bolt.fill")
-                        .font(IslandTypography.body)
-                        .fontWeight(.regular)
-                }
-                if isPluggedIn {
-                    Label("Plugged In", systemImage: "powerplug.fill")
-                        .font(IslandTypography.body)
-                        .fontWeight(.regular)
-                }
-                if timeToFullCharge > 0 {
-                    Label("Time to Full Charge: \(timeToFullCharge) min", systemImage: "clock")
-                        .font(IslandTypography.body)
-                        .fontWeight(.regular)
-                }
-                if !isCharging && isPluggedIn && levelBattery >= 80 {
-                    Label("Charging on Hold: Desktop Mode", systemImage: "desktopcomputer")
-                        .font(IslandTypography.body)
-                        .fontWeight(.regular)
-                }
-                    
             }
-            .padding(.vertical, 8)
 
             Divider().background(Color.islandBorder)
 
-            Button(action: openBatteryPreferences) {
-                Label("Battery Settings", systemImage: "gearshape")
-                    .fontWeight(.regular)
+            Button(action: openLowPowerModeSettings) {
+                Label(
+                    isInLowPowerMode ? "Low Power Mode Settings…" : "Configure Low Power Mode…",
+                    systemImage: "bolt.circle"
+                )
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding()
         .frame(width: 280)
         .foregroundColor(Color.islandPrimaryText)
+        .background(Color.islandModuleSurface)
+        .onAppear { health = .current }
     }
 
-    private func openBatteryPreferences() {
+    private func batteryRow(title: String, value: String, symbol: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .foregroundStyle(Color.islandSecondaryText)
+                .frame(width: 16)
+            Text(title)
+                .font(IslandTypography.body)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(IslandTypography.metadata)
+                .foregroundStyle(Color.islandSecondaryText)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func openLowPowerModeSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery") {
             openURL(url)
             onDismiss()
@@ -195,7 +259,10 @@ struct BoringBatteryView: View {
             HStack {
                 if Defaults[.showBatteryPercentage] {
                     Text("\(Int32(levelBattery))%")
-                    .font(IslandTypography.control)
+                        .font(IslandTypography.control)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(Color.islandPrimaryText)
                 }
                 BatteryView(

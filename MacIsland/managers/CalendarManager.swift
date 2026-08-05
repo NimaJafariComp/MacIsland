@@ -23,6 +23,17 @@ enum CalendarAccessPolicy {
     ) -> Bool {
         !hasReadAccess(calendarStatus) && !hasReadAccess(reminderStatus)
     }
+
+    static func homeStatusMessage(for status: EKAuthorizationStatus) -> String? {
+        guard !hasReadAccess(status) else { return nil }
+        if status == .notDetermined {
+            return "Allow Calendar Access in Settings"
+        }
+        if status == .denied || status == .restricted {
+            return "Calendar access denied in System Settings"
+        }
+        return "Calendar access required"
+    }
 }
 
 // MARK: - CalendarManager
@@ -40,6 +51,8 @@ class CalendarManager: ObservableObject {
     @Published var calendarAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     @Published var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     private var selectedCalendars: [CalendarModel] = []
+    /// Non-persistent fixtures used exclusively by UI audit mode.
+    private var auditEvents: [EventModel]?
     private let calendarService = CalendarService()
 
     private var eventStoreChangedObserver: NSObjectProtocol?
@@ -80,6 +93,11 @@ class CalendarManager: ObservableObject {
     /// Reads the current state without prompting. Views use this when they appear so
     /// permission requests always remain a deliberate user action.
     func refreshAuthorizationStatuses() {
+        if auditEvents != nil {
+            calendarAuthorizationStatus = .fullAccess
+            reminderAuthorizationStatus = .fullAccess
+            return
+        }
         calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
         reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
     }
@@ -238,7 +256,18 @@ class CalendarManager: ObservableObject {
         await updateEvents()
     }
 
+    func useAuditEvents(_ events: [EventModel]) {
+        auditEvents = events.sorted { $0.start < $1.start }
+        self.events = auditEvents ?? []
+        calendarAuthorizationStatus = .fullAccess
+        reminderAuthorizationStatus = .fullAccess
+    }
+
     private func updateEvents() async {
+        if let auditEvents {
+            events = auditEvents
+            return
+        }
         refreshAuthorizationStatuses()
         guard !CalendarAccessPolicy.shouldClearEvents(
             calendarStatus: calendarAuthorizationStatus,

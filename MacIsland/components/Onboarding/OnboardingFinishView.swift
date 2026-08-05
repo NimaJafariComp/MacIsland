@@ -21,6 +21,10 @@ struct OnboardingFinishView: View {
             Text("MacIsland Is Ready")
                 .font(.title2.weight(.semibold))
 
+            Text("Nima Jafari")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+
             Text("Hover over the notch to open it. Change features and shortcuts in Settings.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

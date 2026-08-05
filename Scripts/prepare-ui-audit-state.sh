@@ -2,23 +2,32 @@
 set -euo pipefail
 
 if (( $# != 2 )); then
-  print -u2 'usage: Scripts/prepare-ui-audit-state.sh /path/to/MacIsland.app closed|dismissed|home|expanded|hover'
+  print -u2 'usage: Scripts/prepare-ui-audit-state.sh /path/to/MacIsland.app closed|dismissed|home|expanded|hover|shelf|snippets-stress|timer|media|camera|error|accessibility|calendar-stress|calendar-home-stress'
   exit 64
 fi
 
 app_path=${1:A}
 state=$2
 [[ -d "$app_path" ]] || { print -u2 "Missing app: $app_path"; exit 66; }
-[[ "$state" == closed || "$state" == dismissed || "$state" == home || "$state" == expanded || "$state" == hover ]] || {
+[[ "$state" == closed || "$state" == dismissed || "$state" == home || "$state" == expanded || "$state" == hover || "$state" == shelf || "$state" == snippets-stress || "$state" == snippets || "$state" == timer || "$state" == media || "$state" == camera || "$state" == error || "$state" == accessibility || "$state" == calendar-stress || "$state" == calendar || "$state" == calendar-home-stress || "$state" == calendar-home ]] || {
   print -u2 "Unsupported UI audit state: $state"
   exit 64
 }
-command -v cliclick >/dev/null || {
-  print -u2 'cliclick is required for approved Assistive-Access state preparation.'
+if [[ "$state" == hover ]] && ! command -v cliclick >/dev/null; then
+  print -u2 'cliclick is required only to prepare the production hover state.'
   exit 69
-}
+fi
 
-open "$app_path"
+# Audit launches need explicit arguments, so `open -n` is intentional. macOS
+# still coalesces app bundles with the same bundle identifier, even from a
+# different build directory. Refuse every existing MacIsland process rather
+# than accidentally auditing the wrong instance or creating a duplicate.
+if pgrep -f '/MacIsland.app/Contents/MacOS/MacIsland' >/dev/null; then
+  print -u2 "MacIsland is already running. Quit it before preparing an audit instance."
+  exit 73
+fi
+
+open -n "$app_path" --args -uiAuditMode YES -uiAuditState "$state"
 for _ in {1..50}; do
   if osascript -l JavaScript -e 'const windows = Application("System Events").processes.byName("MacIsland").windows.length; if (windows < 1) throw new Error("MacIsland has no accessibility window");' >/dev/null 2>&1; then
     break
@@ -56,18 +65,18 @@ target_x=$(( island_x + island_width / 2 ))
 # inside the panel on notchless displays.
 target_y=$(( island_y + (island_height < 40 ? island_height / 2 : 40) ))
 
-# Moving away first gives the island's normal close path time to settle. The
-# eased movement preserves the production hover path instead of teleporting
-# through it as a synthetic coordinate jump.
-cliclick -e 3 -w 50 "m:16,$safe_y" w:700
-
 case "$state" in
   closed|dismissed) ;;
-  home|expanded) cliclick -e 3 -w 50 "m:$target_x,$target_y" w:250 "c:$target_x,$target_y" w:500 ;;
+  home|expanded|shelf|snippets-stress|snippets|timer|media|camera|error|accessibility|calendar-stress|calendar|calendar-home-stress|calendar-home) ;;
   # The default hover frame is centered on the island. Keeping the audit
   # pointer on the live AX window center exercises the production hit target
   # regardless of display scale or the optional extended-hover preference.
-  hover) cliclick -e 3 -w 50 "m:$target_x,$target_y" w:500 ;;
+  hover)
+    # Moving away first gives the island's normal close path time to settle.
+    # The eased movement preserves the production hover path instead of a
+    # synthetic state change.
+    cliclick -e 3 -w 50 "m:16,$safe_y" w:700 "m:$target_x,$target_y" w:500
+    ;;
 esac
 
 print "Prepared MacIsland UI audit state: $state"

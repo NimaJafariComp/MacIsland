@@ -8,6 +8,84 @@ import XCTest
 
 @MainActor
 final class MacIslandTests: XCTestCase {
+    func testUIAuditStatesAcceptLaunchAliasesAndUniqueShortcuts() {
+        XCTAssertEqual(UIAuditState(argument: "expanded"), .home)
+        XCTAssertEqual(UIAuditState(argument: "dismissed"), .closed)
+        XCTAssertEqual(UIAuditState(argument: "MEDIA"), .media)
+        XCTAssertEqual(UIAuditState(argument: "media-playing"), .mediaPlaying)
+        XCTAssertEqual(UIAuditState(argument: "media-paused"), .mediaPaused)
+        XCTAssertEqual(UIAuditState(argument: "calendar"), .calendarStress)
+        XCTAssertEqual(UIAuditState(argument: "calendar-stress"), .calendarStress)
+        XCTAssertEqual(UIAuditState(argument: "calendar-home"), .calendarHomeStress)
+        XCTAssertEqual(UIAuditState(argument: "calendar-home-stress"), .calendarHomeStress)
+        XCTAssertEqual(UIAuditState(argument: "snippets-stress"), .snippetsStress)
+        XCTAssertEqual(UIAuditState(argument: "unknown"), .closed)
+
+        XCTAssertEqual(UIAuditState(shortcut: "1"), .closed)
+        XCTAssertEqual(UIAuditState(shortcut: "2"), .hover)
+        XCTAssertEqual(UIAuditState(shortcut: "3"), .home)
+        XCTAssertEqual(UIAuditState(shortcut: "4"), .shelf)
+        XCTAssertEqual(UIAuditState(shortcut: "5"), .timer)
+        XCTAssertEqual(UIAuditState(shortcut: "6"), .media)
+        XCTAssertEqual(UIAuditState(shortcut: "7"), .camera)
+        XCTAssertEqual(UIAuditState(shortcut: "8"), .error)
+        XCTAssertEqual(UIAuditState(shortcut: "9"), .accessibility)
+        XCTAssertNil(UIAuditState(shortcut: "0"))
+    }
+
+    func testExpandedPageSizingUsesCompactFloorAndContentCaps() {
+        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 0), 190)
+        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 8), 358)
+        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 100), 440)
+
+        XCTAssertEqual(IslandExpandedPageSizing.calendarHeight(itemCount: 0), 220)
+        XCTAssertEqual(IslandExpandedPageSizing.calendarHeight(itemCount: 4), 234)
+        XCTAssertEqual(IslandExpandedPageSizing.calendarHeight(itemCount: 9), 394)
+        XCTAssertEqual(IslandExpandedPageSizing.calendarHeight(itemCount: 100), 900)
+    }
+
+    func testCalendarHomeStatusMessageDistinguishesAccessStates() {
+        XCTAssertEqual(
+            CalendarAccessPolicy.homeStatusMessage(for: .notDetermined),
+            "Allow Calendar Access in Settings"
+        )
+        XCTAssertEqual(
+            CalendarAccessPolicy.homeStatusMessage(for: .denied),
+            "Calendar access denied in System Settings"
+        )
+        XCTAssertEqual(
+            CalendarAccessPolicy.homeStatusMessage(for: .restricted),
+            "Calendar access denied in System Settings"
+        )
+        XCTAssertNil(CalendarAccessPolicy.homeStatusMessage(for: .fullAccess))
+    }
+
+    func testReminderAccessibilityNamesTheReminderAndItsCompletionAction() {
+        XCTAssertEqual(
+            CalendarReminderPresentation.rowLabel(title: "Pick up package"),
+            "Reminder: Pick up package"
+        )
+        XCTAssertEqual(
+            CalendarReminderPresentation.toggleLabel(title: "Pick up package", completed: false),
+            "Mark Pick up package as complete"
+        )
+        XCTAssertEqual(
+            CalendarReminderPresentation.toggleLabel(title: "Pick up package", completed: true),
+            "Mark Pick up package as incomplete"
+        )
+    }
+
+    func testHomeCalendarSummaryIncludesEventsAndReminders() {
+        XCTAssertEqual(
+            HomeCalendarSummaryPresentation.countLabel(itemCount: 1, reminderCount: 0),
+            "1 item"
+        )
+        XCTAssertEqual(
+            HomeCalendarSummaryPresentation.countLabel(itemCount: 9, reminderCount: 3),
+            "9 items · 3 reminders"
+        )
+    }
+
     func testOpenAndCloseStateMachine() {
         let viewModel = BoringViewModel()
 
@@ -97,6 +175,11 @@ final class MacIslandTests: XCTestCase {
             )
             XCTAssertEqual(IslandMotion.durationBudget(for: phase, reduceMotion: true), 0.01)
         }
+
+        XCTAssertEqual(IslandMotion.appKitStateDuration(reduceMotion: false), 0.28)
+        XCTAssertEqual(IslandMotion.appKitStateDuration(reduceMotion: true), 0.01)
+        XCTAssertTrue(IslandMotion.shouldAnimateAppKitStateChanges(reduceMotion: false))
+        XCTAssertFalse(IslandMotion.shouldAnimateAppKitStateChanges(reduceMotion: true))
 
         let spectrum = AudioSpectrum(frame: .zero)
         defer { spectrum.setPlaying(false) }
@@ -282,13 +365,38 @@ final class MacIslandTests: XCTestCase {
         )
     }
 
+    func testClosedTimerActivityStaysCompactWhileAccommodatingControls() {
+        let narrowBridge = ClosedTimerActivityGeometry(physicalBridgeWidth: 120)
+        XCTAssertEqual(narrowBridge.contentWidth, 176)
+
+        let notchedBridge = ClosedTimerActivityGeometry(physicalBridgeWidth: 208)
+        XCTAssertEqual(notchedBridge.contentWidth, 208)
+        XCTAssertEqual(ClosedTimerActivityGeometry.controlHeight, 32)
+        XCTAssertEqual(ClosedTimerActivityGeometry.bottomInset, 6)
+    }
+
+    func testPausedTrackRemainsPresentable() {
+        let paused = PlaybackState(
+            bundleIdentifier: "com.apple.Music",
+            isPlaying: false,
+            title: "Track",
+            artist: "Artist"
+        )
+        XCTAssertTrue(MediaPresentationPolicy.hasTrack(paused))
+        XCTAssertFalse(MediaPresentationPolicy.isIdle(paused))
+
+        let noTrack = PlaybackState(bundleIdentifier: "com.apple.Music")
+        XCTAssertFalse(MediaPresentationPolicy.hasTrack(noTrack))
+        XCTAssertTrue(MediaPresentationPolicy.isIdle(noTrack))
+    }
+
     func testHomeLayoutBudgetKeepsMediaPrimaryAndBoundsOptionalModules() {
         XCTAssertEqual(
             IslandStyle.homeContentSize(
                 openIslandSize: CGSize(width: 600, height: 300),
                 headerHeight: 32
             ),
-            CGSize(width: 538, height: 256)
+            CGSize(width: 538, height: 248)
         )
 
         let openIsland = CGSize(width: 640, height: 190)
@@ -300,10 +408,10 @@ final class MacIslandTests: XCTestCase {
             openIslandSize: openIsland,
             headerHeight: 32
         )
-        XCTAssertEqual(expandedPage, CGSize(width: 578, height: 146))
+        XCTAssertEqual(expandedPage, CGSize(width: 578, height: 138))
         XCTAssertEqual(homeContent, expandedPage)
         XCTAssertEqual(
-            32 + homeContent.height + IslandStyle.homeTopInset
+            32 + IslandStyle.headerContentSpacing + homeContent.height + IslandStyle.homeTopInset
                 + IslandStyle.homeBottomInset + IslandStyle.openSurfacePadding,
             openIsland.height
         )
@@ -314,7 +422,7 @@ final class MacIslandTests: XCTestCase {
             wantsCamera: true,
             showsWeather: false
         )
-        XCTAssertEqual(full.mediaWidth, 282)
+        XCTAssertEqual(full.mediaWidth, 286)
         XCTAssertEqual(full.calendarWidth, 178)
         XCTAssertEqual(full.cameraSize, CGSize(width: 112, height: 112))
         XCTAssertLessThanOrEqual(full.mediaWidth + full.occupiedWidth, full.availableSize.width)
@@ -325,8 +433,8 @@ final class MacIslandTests: XCTestCase {
             wantsCamera: true,
             showsWeather: true
         )
-        XCTAssertEqual(weather.moduleHeight, 108)
-        XCTAssertEqual(weather.cameraSize, CGSize(width: 112, height: 108))
+        XCTAssertEqual(weather.moduleHeight, 104)
+        XCTAssertEqual(weather.cameraSize, CGSize(width: 112, height: 104))
 
         let narrow = HomeLayoutBudget(
             availableSize: CGSize(width: 296, height: 140),
@@ -417,6 +525,38 @@ final class MacIslandTests: XCTestCase {
         ))
     }
 
+    func testMirrorPresentationExplainsUnavailableAndPermissionStates() {
+        XCTAssertEqual(MirrorPresentation.toggledShape(from: .circle), .rectangle)
+        XCTAssertEqual(MirrorPresentation.toggledShape(from: .rectangle), .circle)
+        XCTAssertEqual(
+            MirrorPresentation.status(
+                isRunning: false,
+                cameraAvailable: false,
+                authorizationStatus: .authorized,
+                managerMessage: nil
+            ),
+            "No camera available"
+        )
+        XCTAssertEqual(
+            MirrorPresentation.status(
+                isRunning: false,
+                cameraAvailable: true,
+                authorizationStatus: .notDetermined,
+                managerMessage: nil
+            ),
+            "Camera access will be requested when opened"
+        )
+        XCTAssertEqual(
+            MirrorPresentation.status(
+                isRunning: false,
+                cameraAvailable: true,
+                authorizationStatus: .denied,
+                managerMessage: nil
+            ),
+            "Camera access is required"
+        )
+    }
+
     func testUnavailableXPCServiceFailsClosed() async {
         let client = XPCHelperClient(serviceName: "com.macisland.tests.unavailable.\(UUID().uuidString)")
 
@@ -445,6 +585,18 @@ final class MacIslandTests: XCTestCase {
         } catch {
             XCTAssertEqual((error as? URLError)?.code, .userAuthenticationRequired)
         }
+    }
+
+    func testWeatherLocationRequestDefaultsToCurrentLocationUnlessACustomCityIsChosen() {
+        XCTAssertEqual(
+            WeatherLocationRequest(mode: .automatic, cityQuery: "Austin"),
+            .currentLocation
+        )
+        XCTAssertEqual(
+            WeatherLocationRequest(mode: .custom, cityQuery: "  Austin  "),
+            .city("Austin")
+        )
+        XCTAssertNil(WeatherLocationRequest(mode: .custom, cityQuery: "   "))
     }
 
     func testDisplayRemovalAndSleepWakePoliciesFailSafe() {
@@ -491,8 +643,10 @@ final class MacIslandTests: XCTestCase {
     func testCountdownCompletionPersistsUntilDismissed() async throws {
         let coordinator = BoringViewCoordinator.shared
         let originalNotifications = Defaults[.timerCompletionNotifications]
+        TimerCompletionFeedback.suppressPlaybackForTesting = true
         Defaults[.timerCompletionNotifications] = false
         defer {
+            TimerCompletionFeedback.suppressPlaybackForTesting = false
             Defaults[.timerCompletionNotifications] = originalNotifications
             coordinator.stopTimer()
         }
@@ -505,6 +659,29 @@ final class MacIslandTests: XCTestCase {
 
         coordinator.stopTimer()
         XCTAssertEqual(coordinator.timerStatus, .idle)
+    }
+
+    func testTimerCompletionResumesOnlyTheMediaSourceItPaused() {
+        let paused = TimerPausedMedia(
+            source: .spotify,
+            bundleIdentifier: "com.spotify.client"
+        )
+
+        XCTAssertTrue(TimerCompletionMediaPolicy.shouldResume(
+            pausedMedia: paused,
+            currentSource: .spotify,
+            currentBundleIdentifier: "com.spotify.client"
+        ))
+        XCTAssertFalse(TimerCompletionMediaPolicy.shouldResume(
+            pausedMedia: paused,
+            currentSource: .appleMusic,
+            currentBundleIdentifier: "com.apple.Music"
+        ))
+        XCTAssertFalse(TimerCompletionMediaPolicy.shouldResume(
+            pausedMedia: paused,
+            currentSource: .spotify,
+            currentBundleIdentifier: "com.spotify.other"
+        ))
     }
 
     func testPersistedCountdownRecoveryHonorsElapsedAndPausedTime() {
@@ -806,20 +983,6 @@ final class MacIslandTests: XCTestCase {
 
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "copy this snippet")
         XCTAssertTrue(coordinator.clipboardEntries.isEmpty)
-    }
-
-    func testClipboardSearchTrimsAndMatchesCaseInsensitively() {
-        let entries = [
-            ClipboardEntry(text: "MacIsland visual proof"),
-            ClipboardEntry(text: "Unrelated text"),
-            ClipboardEntry(text: "macisland release notes"),
-        ]
-
-        XCTAssertEqual(
-            BoringViewCoordinator.matchingClipboardEntries(entries, query: "  MACISLAND  ").map(\.text),
-            ["MacIsland visual proof", "macisland release notes"]
-        )
-        XCTAssertEqual(BoringViewCoordinator.matchingClipboardEntries(entries, query: " "), entries)
     }
 
     func testShelfSelectionKeyboardNavigationClampsAtEnds() {

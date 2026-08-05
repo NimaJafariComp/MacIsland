@@ -13,6 +13,19 @@ certificate for the app and embedded XPC helper. Archive from Xcode, then verify
 the archive contains `MacIsland.app`, the XPC helper, embedded frameworks, and
 the GPL notices with `codesign --verify --deep --strict --verbose=2`.
 
+### Login item and permission continuity
+
+The in-app **Launch MacIsland at login** setting uses macOS's `SMAppService`
+main-app login item. It is registered by the installed app and survives normal
+launches and signed in-place updates; no bundled LaunchAgent is required.
+
+macOS privacy grants (Camera, Calendar/Reminders, Location, Notifications, and
+Accessibility) are stored by the system for the app's signing identity. Ship
+the DMG and every update with the same `com.macisland.app` bundle identifier
+and the same Developer ID Application team/signing identity. Do not replace an
+installed release with an ad-hoc build or change the bundle identifier: macOS
+will correctly treat that as a different app and may request permissions again.
+
 ## Notarization
 
 Store the notarization profile or App Store Connect API key only in the release

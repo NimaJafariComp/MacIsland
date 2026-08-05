@@ -190,7 +190,7 @@ private struct TimerSettings: View {
                 Defaults.Toggle(key: .timerCompletionNotifications) {
                     Text("Notify when countdown finishes")
                 }
-                Text("MacIsland asks for notification permission when you start a countdown. Turn this off to keep timers silent.")
+                Text("MacIsland asks for notification permission when you start a countdown. The in-app alarm continues until you dismiss a finished timer.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -288,6 +288,7 @@ private struct SystemStatesSettings: View {
 
 private struct WeatherSettings: View {
     @Default(.weatherEnabled) private var weatherEnabled
+    @Default(.weatherLocationMode) private var weatherLocationMode
     @Default(.weatherLocationQuery) private var weatherLocationQuery
     @Default(.weatherTemperatureUnit) private var weatherTemperatureUnit
     @ObservedObject private var coordinator = BoringViewCoordinator.shared
@@ -298,9 +299,21 @@ private struct WeatherSettings: View {
                 Defaults.Toggle(key: .weatherEnabled) {
                     Text("Show weather on Home")
                 }
-                TextField("City", text: $weatherLocationQuery)
+                Picker("Location", selection: $weatherLocationMode) {
+                    ForEach(WeatherLocationMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
                     .disabled(!weatherEnabled)
-                    .onSubmit { coordinator.refreshWeather(force: true) }
+                if weatherLocationMode == .custom {
+                    TextField("City", text: $weatherLocationQuery)
+                        .disabled(!weatherEnabled)
+                        .onSubmit { coordinator.refreshWeather(force: true) }
+                } else {
+                    Text("Uses this Mac’s current location. Weather.app’s private saved-city list is not available to other apps.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("Temperature", selection: $weatherTemperatureUnit) {
                     ForEach(WeatherTemperatureUnit.allCases) { unit in
                         Text(unit.title).tag(unit)
@@ -308,13 +321,17 @@ private struct WeatherSettings: View {
                 }
                 .disabled(!weatherEnabled)
                 Button("Refresh weather") { coordinator.refreshWeather(force: true) }
-                    .disabled(!weatherEnabled || weatherLocationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!weatherEnabled || (weatherLocationMode == .custom && weatherLocationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
                 switch coordinator.weatherStatus {
                 case .idle:
                     Text("Weather is off.")
                 case .loading:
-                    Label("Updating weather…", systemImage: "arrow.triangle.2.circlepath")
+                    if let snapshot = coordinator.weatherSnapshot {
+                        Text("Updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
+                    } else {
+                        Text("Weather data will appear here.")
+                    }
                 case .ready:
                     if let snapshot = coordinator.weatherSnapshot {
                         Text("Updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
@@ -328,6 +345,7 @@ private struct WeatherSettings: View {
         .navigationTitle("Weather")
         .onAppear { coordinator.refreshWeather() }
         .onChange(of: weatherEnabled) { _, _ in coordinator.refreshWeather() }
+        .onChange(of: weatherLocationMode) { _, _ in coordinator.refreshWeather(force: true) }
     }
 }
 
@@ -356,7 +374,9 @@ struct BehaviorSettings: View {
                     Text("Show menu bar icon")
                 }
                 .tint(.effectiveAccent)
-                LaunchAtLogin.Toggle("Launch at login")
+                LaunchAtLogin.Toggle("Launch MacIsland at login")
+                    .help("Open MacIsland automatically after you sign in.")
+                    .accessibilityHint("Registers or removes MacIsland from your macOS login items.")
                 Defaults.Toggle(key: .showOnAllDisplays) {
                     Text("Show on all displays")
                 }
@@ -526,7 +546,7 @@ private struct GesturesSettings: View {
             } header: {
                 Text("Trackpad")
             } footer: {
-                Text("When hover-open is off, swipe down with two fingers on the notch to open it and swipe up to close it.")
+                Text("When hover-open is off, swipe down with two fingers on the notch to open it. Drag upward on the island to close it; ordinary scrolling never closes MacIsland.")
             }
 
             ShortcutSettingsSections()

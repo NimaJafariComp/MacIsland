@@ -7,12 +7,124 @@
 
 import AppKit
 import Combine
+@preconcurrency import CoreLocation
 import Defaults
 import Network
 import SwiftUI
 import UserNotifications
 
 typealias WeatherDataLoader = @Sendable (URL) async throws -> (Data, URLResponse)
+
+enum WeatherLocationRequest: Equatable {
+    case currentLocation
+    case city(String)
+
+    init?(mode: WeatherLocationMode, cityQuery: String) {
+        switch mode {
+        case .automatic:
+            self = .currentLocation
+        case .custom:
+            let city = cityQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !city.isEmpty else { return nil }
+            self = .city(city)
+        }
+    }
+}
+
+private enum WeatherLocationError: LocalizedError {
+    case servicesDisabled
+    case accessDenied
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .servicesDisabled: "Location Services is turned off"
+        case .accessDenied: "Allow Location Services for automatic weather"
+        case .unavailable: "Current location is unavailable"
+        }
+    }
+}
+
+@MainActor
+private final class CurrentWeatherLocationResolver: NSObject, @MainActor CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<CLLocation, Error>?
+    private var authorizationContinuation: CheckedContinuation<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+    }
+
+    func currentLocation() async throws -> CLLocation {
+        guard CLLocationManager.locationServicesEnabled() else {
+            throw WeatherLocationError.servicesDisabled
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            timeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(12))
+                guard !Task.isCancelled else { return }
+                self?.finish(.failure(WeatherLocationError.unavailable))
+            }
+            requestLocationIfAuthorized()
+        }
+    }
+
+    /// Requests only Location Services authorization for first-run onboarding.
+    /// It intentionally does not begin a location read or weather refresh.
+    func requestAuthorization() async {
+        guard CLLocationManager.locationServicesEnabled() else { return }
+        guard manager.authorizationStatus == .notDetermined else { return }
+        await withCheckedContinuation { continuation in
+            authorizationContinuation = continuation
+            manager.requestWhenInUseAuthorization()
+        }
+    }
+
+    private func requestLocationIfAuthorized() {
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(.failure(WeatherLocationError.accessDenied))
+        @unknown default:
+            finish(.failure(WeatherLocationError.unavailable))
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if let authorizationContinuation {
+            self.authorizationContinuation = nil
+            authorizationContinuation.resume()
+            return
+        }
+        requestLocationIfAuthorized()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else {
+            finish(.failure(WeatherLocationError.unavailable))
+            return
+        }
+        finish(.success(location))
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<CLLocation, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        continuation.resume(with: result)
+    }
+}
 
 struct PersistedCountdownTimer: Codable, Equatable {
     let endDate: Date?
@@ -46,6 +158,59 @@ enum TimerCompletionNotification {
 
     static func installForegroundDelivery() {
         UNUserNotificationCenter.current().delegate = TimerCompletionNotificationDelegate.shared
+    }
+}
+
+@MainActor
+enum TimerCompletionFeedback {
+    private static var alarmSound: NSSound?
+    static var suppressPlaybackForTesting = false
+    static let alarmResourceName = "TimerAlarm"
+
+    /// An alarm is distinct from a notification: it continues until the user
+    /// acknowledges the completed timer, even when notification delivery is
+    /// disabled or delayed by macOS.
+    static func startAlarm() {
+        guard !suppressPlaybackForTesting else { return }
+        stopAlarm()
+
+        // This is a bundled, public-license asset mastered for a clear alarm
+        // attack. It avoids private Clock/iPhone resources and the relatively
+        // quiet, user-configurable macOS alert sounds.
+        guard let url = Bundle.main.url(forResource: alarmResourceName, withExtension: "wav"),
+              let sound = NSSound(contentsOf: url, byReference: true) else {
+            NSSound.beep()
+            return
+        }
+
+        sound.loops = true
+        sound.volume = 1
+        alarmSound = sound
+        sound.play()
+    }
+
+    static func stopAlarm() {
+        alarmSound?.stop()
+        alarmSound = nil
+    }
+}
+
+struct TimerPausedMedia: Equatable {
+    let source: MediaControllerType
+    let bundleIdentifier: String?
+}
+
+enum TimerCompletionMediaPolicy {
+    static func shouldResume(
+        pausedMedia: TimerPausedMedia?,
+        currentSource: MediaControllerType,
+        currentBundleIdentifier: String?
+    ) -> Bool {
+        guard let pausedMedia, pausedMedia.source == currentSource else {
+            return false
+        }
+        return pausedMedia.bundleIdentifier == nil
+            || pausedMedia.bundleIdentifier == currentBundleIdentifier
     }
 }
 
@@ -258,6 +423,7 @@ class BoringViewCoordinator: ObservableObject {
     @Published private(set) var timerRemaining: TimeInterval = 0
     @Published private(set) var stopwatchElapsed: TimeInterval = 0
     @Published private(set) var clipboardEntries: [ClipboardEntry] = []
+    private var auditClipboardEntriesActive = false
     @Published private(set) var weatherStatus: WeatherStatus = .idle
     @Published private(set) var weatherSnapshot: WeatherSnapshot?
     @Published private(set) var connectivityState: ConnectivityState = .unknown
@@ -270,11 +436,14 @@ class BoringViewCoordinator: ObservableObject {
     private var timerNotificationTask: Task<Void, Never>?
     private var timerNotificationScheduleID = UUID()
     private var timerEndDate: Date?
+    private var mediaPausedForTimerAlarm: TimerPausedMedia?
     private var pendingActivities: [PendingIslandActivity] = []
     private var stopwatchStartedAt: Date?
     private var stopwatchAccumulatedElapsed: TimeInterval = 0
     private var clipboardMonitorTask: Task<Void, Never>?
     private var weatherRefreshTask: Task<Void, Never>?
+    private var weatherRefreshLoopTask: Task<Void, Never>?
+    private var currentWeatherLocationResolver: CurrentWeatherLocationResolver?
     private var weatherRefreshID = UUID()
     private var connectivityMonitor: NWPathMonitor?
     private let connectivityQueue = DispatchQueue(label: "com.macisland.connectivity", qos: .utility)
@@ -285,12 +454,33 @@ class BoringViewCoordinator: ObservableObject {
     private let weatherStorageKey = "weatherSnapshotV1"
     private let countdownTimerStorageKey = "countdownTimerV1"
     private let weatherCacheLifetime: TimeInterval = 15 * 60
+    private let weatherRefreshInterval: Duration = .seconds(30 * 60)
     private var cancellables = Set<AnyCancellable>()
 
     @AppStorage("firstLaunch") var firstLaunch: Bool = true
     @AppStorage("showWhatsNew") var showWhatsNew: Bool = true
     @AppStorage("musicLiveActivityEnabled") var musicLiveActivityEnabled: Bool = true
     @AppStorage("currentMicStatus") var currentMicStatus: Bool = true
+
+    /// First-run onboarding asks before automatic weather needs this permission;
+    /// a later weather refresh remains the fallback for existing installations.
+    func requestWeatherLocationPermission() async {
+        let resolver = CurrentWeatherLocationResolver()
+        currentWeatherLocationResolver = resolver
+        await resolver.requestAuthorization()
+        if currentWeatherLocationResolver === resolver {
+            currentWeatherLocationResolver = nil
+        }
+    }
+
+    /// Timer completion keeps this authorization request out of an active timer
+    /// flow for new users. Existing installs still request on first timer use.
+    func requestTimerNotificationPermission() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .notDetermined else { return }
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+    }
 
     @AppStorage("alwaysShowTabs") var alwaysShowTabs: Bool = true {
         didSet {
@@ -334,6 +524,7 @@ class BoringViewCoordinator: ObservableObject {
 
     private init() {
         TimerCompletionNotification.installForegroundDelivery()
+        migrateWeatherLocationPreferenceIfNeeded()
         // Perform migration from name-based to UUID-based storage
         if preferredScreenUUID == nil, let legacyName = legacyPreferredScreenName {
             // Try to find screen by name and migrate to UUID
@@ -419,6 +610,10 @@ class BoringViewCoordinator: ObservableObject {
         loadClipboardEntries()
         setClipboardMonitoring(enabled: Defaults[.clipboardHistoryEnabled])
         loadWeatherSnapshot()
+        // Weather refreshes on app startup (and from its explicit Settings
+        // controls), never because the Home page happens to reappear.
+        refreshWeather()
+        startWeatherRefreshLoop()
         restoreCountdownTimer()
     }
 
@@ -505,7 +700,10 @@ class BoringViewCoordinator: ObservableObject {
         Defaults[.focusIndicatorActive] = active
     }
 
-    func refreshWeather(force: Bool = false) {
+    /// Refreshes weather while preserving a usable forecast during background
+    /// work. A foreground caller can still opt into an explicit loading state
+    /// when no forecast exists yet.
+    func refreshWeather(force: Bool = false, silently: Bool = false) {
         weatherRefreshTask?.cancel()
         weatherRefreshTask = nil
         weatherRefreshID = UUID()
@@ -515,35 +713,48 @@ class BoringViewCoordinator: ObservableObject {
             return
         }
 
-        let location = Defaults[.weatherLocationQuery].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !location.isEmpty else {
+        let mode = Defaults[.weatherLocationMode]
+        let cityQuery = Defaults[.weatherLocationQuery]
+        guard let request = WeatherLocationRequest(mode: mode, cityQuery: cityQuery) else {
             weatherStatus = .failed("Choose a city in Settings")
             return
         }
 
-        if !force, let weatherSnapshot,
-           Self.isWeatherCacheFresh(
-               weatherSnapshot,
-               for: location,
-               now: .now,
-               lifetime: weatherCacheLifetime
-           )
-        {
-            weatherStatus = .ready
-            return
-        }
-
         let refreshID = weatherRefreshID
-        weatherStatus = .loading
-        weatherRefreshTask = Task { [weak self] in
+        let preservesVisibleForecast = silently && weatherSnapshot != nil
+        if !preservesVisibleForecast {
+            weatherStatus = .loading
+        }
+        weatherRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let resolved = try await Self.resolveWeatherLocation(named: location)
-                let snapshot = try await Self.fetchWeather(for: resolved, displayName: location)
+                let resolved: (coordinate: (latitude: Double, longitude: Double), displayName: String)
+                switch request {
+                case .currentLocation:
+                    resolved = try await self.resolveCurrentWeatherLocation()
+                case .city(let city):
+                    resolved = (try await Self.resolveWeatherLocation(named: city), city)
+                }
+
+                if !force, let weatherSnapshot,
+                   Self.isWeatherCacheFresh(
+                       weatherSnapshot,
+                       for: resolved.displayName,
+                       now: .now,
+                       lifetime: self.weatherCacheLifetime
+                   )
+                {
+                    self.weatherStatus = .ready
+                    self.weatherRefreshTask = nil
+                    return
+                }
+
+                let snapshot = try await Self.fetchWeather(for: resolved.coordinate, displayName: resolved.displayName)
                 guard !Task.isCancelled,
                       self.weatherRefreshID == refreshID,
                       Defaults[.weatherEnabled],
-                      Self.normalizedWeatherLocation(Defaults[.weatherLocationQuery]) == Self.normalizedWeatherLocation(location)
+                      Defaults[.weatherLocationMode] == mode,
+                      (mode == .automatic || Self.normalizedWeatherLocation(Defaults[.weatherLocationQuery]) == Self.normalizedWeatherLocation(cityQuery))
                 else { return }
                 self.weatherSnapshot = snapshot
                 self.weatherStatus = .ready
@@ -551,10 +762,41 @@ class BoringViewCoordinator: ObservableObject {
                 self.weatherRefreshTask = nil
             } catch {
                 guard !Task.isCancelled, self.weatherRefreshID == refreshID else { return }
-                self.weatherStatus = .failed("Weather unavailable")
+                // A background refresh should not turn a previously useful
+                // forecast into a transient error surface. The next scheduled
+                // refresh can recover normally.
+                if !preservesVisibleForecast {
+                    self.weatherStatus = .failed((error as? LocalizedError)?.errorDescription ?? "Weather unavailable")
+                } else {
+                    self.weatherStatus = .ready
+                }
                 self.weatherRefreshTask = nil
             }
         }
+    }
+
+    private func startWeatherRefreshLoop() {
+        guard weatherRefreshLoopTask == nil else { return }
+        weatherRefreshLoopTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: self.weatherRefreshInterval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self.refreshWeather(force: true, silently: true)
+            }
+        }
+    }
+
+    private func migrateWeatherLocationPreferenceIfNeeded() {
+        guard !Defaults[.weatherLocationModeMigrated] else { return }
+        if !Defaults[.weatherLocationQuery].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Defaults[.weatherLocationMode] = .custom
+        }
+        Defaults[.weatherLocationModeMigrated] = true
     }
 
     static func isWeatherCacheFresh(
@@ -602,6 +844,22 @@ class BoringViewCoordinator: ObservableObject {
         return (location.latitude, location.longitude)
     }
 
+    private func resolveCurrentWeatherLocation() async throws -> (coordinate: (latitude: Double, longitude: Double), displayName: String) {
+        let resolver = CurrentWeatherLocationResolver()
+        currentWeatherLocationResolver = resolver
+        defer {
+            if currentWeatherLocationResolver === resolver {
+                currentWeatherLocationResolver = nil
+            }
+        }
+        let location = try await resolver.currentLocation()
+        let placemark = try await CLGeocoder().reverseGeocodeLocation(location).first
+        let displayName = [placemark?.locality, placemark?.administrativeArea, placemark?.country]
+            .compactMap { $0 }
+            .first(where: { !$0.isEmpty }) ?? "Current Location"
+        return ((location.coordinate.latitude, location.coordinate.longitude), displayName)
+    }
+
     static func fetchWeather(
         for coordinate: (latitude: Double, longitude: Double),
         displayName: String,
@@ -632,6 +890,11 @@ class BoringViewCoordinator: ObservableObject {
         clipboardChangeCount = pasteboard.changeCount
     }
 
+    func useAuditClipboardEntries(_ entries: [ClipboardEntry]) {
+        auditClipboardEntriesActive = true
+        clipboardEntries = entries
+    }
+
     func removeClipboardEntry(_ entry: ClipboardEntry) {
         clipboardEntries.removeAll { $0.id == entry.id }
         saveClipboardEntries()
@@ -640,12 +903,6 @@ class BoringViewCoordinator: ObservableObject {
     func clearClipboardHistory() {
         clipboardEntries = []
         saveClipboardEntries()
-    }
-
-    static func matchingClipboardEntries(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty else { return entries }
-        return entries.filter { $0.text.localizedCaseInsensitiveContains(normalizedQuery) }
     }
 
     func recordClipboardText(_ text: String) {
@@ -726,11 +983,14 @@ class BoringViewCoordinator: ObservableObject {
     }
 
     private func saveClipboardEntries() {
+        guard !auditClipboardEntriesActive else { return }
         guard let data = try? JSONEncoder().encode(clipboardEntries) else { return }
         UserDefaults.standard.set(data, forKey: clipboardStorageKey)
     }
 
     func startTimer(seconds: TimeInterval) {
+        resumeMediaPausedForTimerAlarm()
+        TimerCompletionFeedback.stopAlarm()
         let clampedSeconds = max(1, seconds)
         timerTask?.cancel()
         timerMode = .countdown
@@ -748,6 +1008,8 @@ class BoringViewCoordinator: ObservableObject {
     }
 
     func startStopwatch() {
+        resumeMediaPausedForTimerAlarm()
+        TimerCompletionFeedback.stopAlarm()
         timerTask?.cancel()
         clearPersistedCountdownTimer()
         cancelTimerCompletionNotification()
@@ -796,6 +1058,8 @@ class BoringViewCoordinator: ObservableObject {
     }
 
     func stopTimer() {
+        TimerCompletionFeedback.stopAlarm()
+        resumeMediaPausedForTimerAlarm()
         timerTask?.cancel()
         timerTask = nil
         timerEndDate = nil
@@ -845,14 +1109,35 @@ class BoringViewCoordinator: ObservableObject {
             self.timerEndDate = nil
             timerStatus = .completed
             clearPersistedCountdownTimer()
-            // Leave the already-scheduled request in place so macOS can deliver
-            // its normal completion alert and sound. Cancelling here races the
-            // notification trigger and makes a finished timer silent.
+            // Pause the active source MacIsland already controls before the
+            // retained alarm begins. Arbitrary third-party audio cannot be
+            // stopped with public macOS APIs, but Apple Music, Spotify, and
+            // supported Now Playing sources follow this path.
+            if !TimerCompletionFeedback.suppressPlaybackForTesting,
+               MusicManager.shared.isPlaying {
+                mediaPausedForTimerAlarm = TimerPausedMedia(
+                    source: MusicManager.shared.activeMediaSource,
+                    bundleIdentifier: MusicManager.shared.bundleIdentifier
+                )
+                MusicManager.shared.pause()
+            }
+            TimerCompletionFeedback.startAlarm()
             NSApp.requestUserAttention(.informationalRequest)
         case .stopwatch:
             guard let stopwatchStartedAt else { return }
             stopwatchElapsed = stopwatchAccumulatedElapsed + Date().timeIntervalSince(stopwatchStartedAt)
         }
+    }
+
+    private func resumeMediaPausedForTimerAlarm() {
+        defer { mediaPausedForTimerAlarm = nil }
+        guard TimerCompletionMediaPolicy.shouldResume(
+            pausedMedia: mediaPausedForTimerAlarm,
+            currentSource: MusicManager.shared.activeMediaSource,
+            currentBundleIdentifier: MusicManager.shared.bundleIdentifier
+        ) else { return }
+
+        MusicManager.shared.play()
     }
 
     private func restoreCountdownTimer() {

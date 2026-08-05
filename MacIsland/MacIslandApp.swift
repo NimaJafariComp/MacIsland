@@ -2,10 +2,239 @@
 // Original copyright remains with Boring Notch contributors.
 
 import AVFoundation
+import AppKit
 import Combine
 import Defaults
 import KeyboardShortcuts
 import SwiftUI
+
+enum UIAuditState: String, CaseIterable, Equatable {
+    case closed
+    case hover
+    case home
+    case shelf
+    case timer
+    case media
+    case mediaPlaying
+    case mediaPaused
+    case camera
+    case error
+    case accessibility
+    case calendarStress
+    case calendarHomeStress
+    case snippetsStress
+    case snippetsEmpty
+
+    init(argument: String) {
+        switch argument.lowercased() {
+        case "dismissed": self = .closed
+        case "expanded": self = .home
+        case "media-playing": self = .mediaPlaying
+        case "media-paused": self = .mediaPaused
+        case "calendar-stress", "calendar": self = .calendarStress
+        case "calendar-home-stress", "calendar-home": self = .calendarHomeStress
+        case "snippets-stress", "snippets": self = .snippetsStress
+        case "snippets-empty", "empty-snippets": self = .snippetsEmpty
+        default: self = UIAuditState(rawValue: argument.lowercased()) ?? .closed
+        }
+    }
+
+    init?(shortcut: String) {
+        let shortcuts: [String: UIAuditState] = [
+            "1": .closed, "2": .hover, "3": .home, "4": .shelf, "5": .timer,
+            "6": .media, "7": .camera, "8": .error, "9": .accessibility,
+        ]
+        guard let state = shortcuts[shortcut] else { return nil }
+        self = state
+    }
+}
+
+enum UIAuditMode {
+    static let isEnabled = ProcessInfo.processInfo.arguments.contains("-uiAuditMode")
+
+    static let launchState: UIAuditState = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-uiAuditState"),
+              arguments.indices.contains(index + 1)
+        else { return .closed }
+        return UIAuditState(argument: arguments[index + 1])
+    }()
+}
+
+/// Deliberately varied in-memory Calendar content for visual QA. Nothing here
+/// is written to EventKit or Defaults, and it is only installed by
+/// `UIAuditState.calendarStress`.
+@MainActor
+private enum UIAuditFixtures {
+    /// Keep an audit run internally consistent if UI state is re-applied after
+    /// midnight. Production events come from EventKit; this only stabilizes
+    /// synthetic QA data for the lifetime of an audit process.
+    static let sessionReferenceDate = Date()
+
+    static let clipboardEntries = [
+        "Meeting notes: confirm product launch milestones and owner assignments.",
+        "ssh deploy@production.example.com",
+        "A deliberately long snippet for exercising two-line clipping and panel growth in the Snippets page.",
+        "Design review agenda",
+        "https://macisland.app/release-notes",
+        "Follow up with the team after the Calendar usability test.",
+        "git status --short",
+        "Remember to archive completed work only after final verification.",
+        "Customer interview highlights: onboarding completion improved after the new permission sequence.",
+        "https://developer.apple.com/documentation/eventkit",
+        "Ship checklist: validate signing, notarization, first-launch onboarding, and update path.",
+        "Design note: keep the notch surface calm while preserving a 44-point minimum target.",
+        "SELECT id, title, updated_at FROM release_notes ORDER BY updated_at DESC;",
+        "Reminder: send the accessibility review summary before tomorrow's design stand-up.",
+        "A second intentionally long audit snippet verifies truncation remains legible in the capped scroll surface.",
+        "https://support.apple.com/guide/mac-help/change-battery-settings-mchleab3a043/mac",
+        "Terminal command: xcodebuild -scheme MacIsland -configuration Debug build",
+        "Pairing notes: check Bluetooth route handoff after reconnecting external headphones.",
+        "The quick brown fox jumps over the lazy dog — typography and line-break regression sample.",
+        "Product copy draft: Your most useful Mac controls, always within reach.",
+        "https://macisland.app/privacy",
+        "Keep this item to exercise a full final grid row in the Snippets audit.",
+        "Release candidate 4: media, calendar, mirror, Shelf, and battery visual checks complete.",
+        "One final compact text entry for scrollbar and content-height verification.",
+    ].map { ClipboardEntry(text: $0) }
+
+    /// A dense, mixed Shelf workload. Text and link items are intentionally
+    /// self-contained: audit mode must not create bookmarks or touch user files.
+    static let shelfItems: [ShelfItem] = [
+        .init(kind: .text(string: "Product launch checklist")),
+        .init(kind: .link(url: URL(string: "https://www.apple.com/mac/")!)),
+        .init(kind: .text(string: "Design review notes — final draft")),
+        .init(kind: .link(url: URL(string: "https://developer.apple.com/documentation/swiftui")!)),
+        .init(kind: .text(string: "ssh deploy@staging.example.com")),
+        .init(kind: .link(url: URL(string: "https://github.com/MacIsland/MacIsland/pulls")!)),
+        .init(kind: .text(string: "Travel itinerary: Austin → San Francisco")),
+        .init(kind: .link(url: URL(string: "https://calendar.apple.com/")!)),
+        .init(kind: .text(string: "Quarterly planning presentation with a deliberately long title")),
+        .init(kind: .link(url: URL(string: "https://www.figma.com/files/recent")!)),
+        .init(kind: .text(string: "Customer research: interview highlights")),
+        .init(kind: .link(url: URL(string: "https://www.notion.so/workspace")!)),
+        .init(kind: .text(string: "Meeting recording follow-up")),
+        .init(kind: .link(url: URL(string: "https://slack.com/app_redirect?channel=design")!)),
+        .init(kind: .text(string: "Release candidate validation steps")),
+        .init(kind: .link(url: URL(string: "https://support.apple.com/macos")!)),
+        .init(kind: .text(string: "One more compact text item")),
+        .init(kind: .link(url: URL(string: "https://macisland.app/release-notes")!)),
+    ]
+
+    static func calendarItems(
+        reference: Date? = nil,
+        omittingAllDay: Bool = false,
+        longFirstTimedTitle: Bool = false
+    ) -> [EventModel] {
+        let calendar = Calendar.autoupdatingCurrent
+        let startOfToday = calendar.startOfDay(for: reference ?? sessionReferenceDate)
+        let work = CalendarModel(
+            id: "audit-work",
+            account: "MacIsland QA",
+            title: "Work",
+            color: .systemBlue,
+            isSubscribed: false,
+            isReminder: false
+        )
+        let personal = CalendarModel(
+            id: "audit-personal",
+            account: "MacIsland QA",
+            title: "Personal",
+            color: .systemPurple,
+            isSubscribed: false,
+            isReminder: false
+        )
+        let reminders = CalendarModel(
+            id: "audit-reminders",
+            account: "MacIsland QA",
+            title: "Reminders",
+            color: .systemOrange,
+            isSubscribed: false,
+            isReminder: true
+        )
+
+        func item(
+            _ id: String,
+            _ title: String,
+            dayOffset: Int = 0,
+            hour: Int? = nil,
+            minute: Int = 0,
+            duration: Int = 30,
+            type: EventType = .event(.accepted),
+            calendar source: CalendarModel
+        ) -> EventModel {
+            let day = calendar.date(byAdding: .day, value: dayOffset, to: startOfToday)!
+            let start = hour.map {
+                calendar.date(bySettingHour: $0, minute: minute, second: 0, of: day)!
+            } ?? day
+            let isAllDay = hour == nil
+            return EventModel(
+                id: id,
+                start: start,
+                end: isAllDay ? calendar.date(byAdding: .day, value: 1, to: start)! : start.addingTimeInterval(TimeInterval(duration * 60)),
+                title: title,
+                location: nil,
+                notes: nil,
+                url: nil,
+                isAllDay: isAllDay,
+                type: type,
+                calendar: source,
+                participants: [],
+                timeZone: .autoupdatingCurrent,
+                hasRecurrenceRules: false,
+                priority: nil
+            )
+        }
+
+        let items = [
+            // After midnight, Home advances to the new day while the prior day
+            // remains selectable in the full-calendar wheel.
+            item("audit-yesterday-wrap", "Release retrospective", dayOffset: -1, hour: 9, duration: 45, calendar: work),
+            item("audit-yesterday-dinner", "Dinner with family", dayOffset: -1, hour: 18, minute: 30, duration: 90, calendar: personal),
+            item("audit-yesterday-reminder", "Submit expense report", dayOffset: -1, hour: 20, type: .reminder(completed: false), calendar: reminders),
+            item("audit-all-day", "Company offsite — all day", type: .event(.accepted), calendar: work),
+            item(
+                "audit-review",
+                longFirstTimedTitle
+                    ? "Quarterly planning workshop with a deliberately long title for Home truncation"
+                    : "Design review: Calendar layout and compact density",
+                hour: 8,
+                minute: 30,
+                duration: 45,
+                calendar: work
+            ),
+            item("audit-overlap-a", "Team stand-up", hour: 9, duration: 30, calendar: work),
+            item("audit-overlap-b", "Doctor appointment", hour: 9, minute: 15, duration: 45, calendar: personal),
+            item("audit-long", "Quarterly planning workshop with a deliberately long title for truncation", hour: 10, duration: 90, calendar: work),
+            item("audit-lunch", "Lunch with Maya", hour: 12, duration: 60, calendar: personal),
+            item("audit-reminder", "Pick up package before 5 PM", hour: 16, type: .reminder(completed: false), calendar: reminders),
+            item("audit-followup", "Send project follow-up", hour: 17, minute: 30, type: .reminder(completed: false), calendar: reminders),
+            item("audit-completed", "Completed reminder remains visible when enabled", hour: 18, type: .reminder(completed: true), calendar: reminders),
+            item("audit-next-all-day", "Conference day", dayOffset: 1, calendar: work),
+            item("audit-next-planning", "Roadmap planning", dayOffset: 1, hour: 9, duration: 60, calendar: work),
+            item("audit-next-review", "Design critique", dayOffset: 1, hour: 11, minute: 30, calendar: personal),
+            item("audit-next-reminder", "Send invoices", dayOffset: 1, hour: 15, type: .reminder(completed: false), calendar: reminders),
+            item("audit-later-sync", "Partner sync", dayOffset: 2, hour: 8, minute: 30, calendar: work),
+            item("audit-later-write", "Write release notes", dayOffset: 2, hour: 10, duration: 60, calendar: work),
+            item("audit-later-reminder", "Review pull requests", dayOffset: 2, hour: 14, type: .reminder(completed: false), calendar: reminders),
+            item("audit-final-standup", "Team stand-up", dayOffset: 3, hour: 9, calendar: work),
+            item("audit-final-dinner", "Dinner reservation", dayOffset: 3, hour: 19, calendar: personal),
+            item("audit-final-reminder", "Pack for trip", dayOffset: 3, hour: 20, type: .reminder(completed: false), calendar: reminders),
+        ]
+        return omittingAllDay ? items.filter { !$0.isAllDay } : items
+    }
+}
+
+@MainActor
+final class UIAuditController: ObservableObject {
+    static let shared = UIAuditController()
+
+    @Published private(set) var state = UIAuditMode.launchState
+
+    func select(_ state: UIAuditState) {
+        self.state = state
+    }
+}
 
 @main
 struct MacIslandApp: App {
@@ -18,6 +247,14 @@ struct MacIslandApp: App {
 
     var body: some Scene {
         MenuBarExtra("MacIsland", systemImage: "sparkle", isInserted: $showMenuBarIcon) {
+            Menu("Mirror") {
+                Button("Open Mirror") {
+                    NotificationCenter.default.post(name: .openMirrorRequested, object: nil)
+                }
+                Button("Close Mirror") {
+                    NotificationCenter.default.post(name: .closeMirrorRequested, object: nil)
+                }
+            }
             Button("Settings") {
                 DispatchQueue.main.async {
                     SettingsWindowController.shared.showWindow()
@@ -54,10 +291,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var workspaceWakeObserver: Any?
     private var workspaceSleepObserver: Any?
     private var escapeKeyMonitor: Any?
+    private var localEscapeKeyMonitor: Any?
+    private var uiAuditKeyMonitor: Any?
+    private var uiAuditState: UIAuditState = UIAuditMode.launchState
     private var isScreenLocked: Bool = false
     private var windowScreenDidChangeObserver: Any?
     private var dragDetectors: [String: DragDetector] = [:] // UUID -> DragDetector
     private var notificationObservers: [NSObjectProtocol] = []
+    private var pendingPanelResize: DispatchWorkItem?
     private var unlockTransitionTask: Task<Void, Never>?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -91,6 +332,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let escapeKeyMonitor {
             NSEvent.removeMonitor(escapeKeyMonitor)
             self.escapeKeyMonitor = nil
+        }
+        if let localEscapeKeyMonitor {
+            NSEvent.removeMonitor(localEscapeKeyMonitor)
+            self.localEscapeKeyMonitor = nil
+        }
+        if let uiAuditKeyMonitor {
+            NSEvent.removeMonitor(uiAuditKeyMonitor)
+            self.uiAuditKeyMonitor = nil
         }
         MusicManager.shared.destroy()
         WebcamManager.shared.stopSession()
@@ -274,15 +523,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.updateMetrics()
         let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
         let rect = NSRect(origin: .zero, size: geometry.panelSize)
-        let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
+        // The Island is visually borderless, but it is also a real interactive
+        // surface. Utility/HUD panel styles can reject text-system activation
+        // even when canBecomeKey is overridden.
+        let styleMask: NSWindow.StyleMask = [.borderless]
         
-        let window = BoringNotchSkyLightWindow(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: false)
+        // SkyLight panels are intentionally treated as overlays by macOS and
+        // can be absent from both accessibility and framebuffer capture. Audit
+        // mode needs an ordinary panel so Computer Use can inspect the same
+        // SwiftUI surface.
+        let window: NSWindow
+        if UIAuditMode.isEnabled || !isScreenLocked {
+            // The normal unlocked Island is a standard AppKit panel. SkyLight
+            // remains reserved for the protected lock-screen path; using it
+            // for every production launch can leave a live process with no
+            // visible panel on the active desktop.
+            let auditWindow = BoringNotchWindow(
+                contentRect: rect,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            auditWindow.isOpaque = false
+            auditWindow.backgroundColor = .clear
+            auditWindow.level = .mainMenu + 3
+            auditWindow.collectionBehavior = [
+                .fullScreenAuxiliary,
+                .stationary,
+                .canJoinAllSpaces,
+            ]
+            if UIAuditMode.isEnabled {
+                auditWindow.collectionBehavior.insert(.moveToActiveSpace)
+                auditWindow.hidesOnDeactivate = false
+            }
+            auditWindow.hasShadow = false
+            auditWindow.isReleasedWhenClosed = false
+            window = auditWindow
+        } else {
+            window = BoringNotchSkyLightWindow(
+                contentRect: rect,
+                styleMask: styleMask,
+                backing: .buffered,
+                defer: false
+            )
+        }
         
         // Enable SkyLight only when screen is locked
-        if isScreenLocked {
-            window.enableSkyLight()
-        } else {
-            window.disableSkyLight()
+        if let skyLightWindow = window as? BoringNotchSkyLightWindow {
+            if isScreenLocked {
+                skyLightWindow.enableSkyLight()
+            } else {
+                skyLightWindow.disableSkyLight()
+            }
         }
 
         window.contentView = NSHostingView(
@@ -290,7 +582,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 .environmentObject(viewModel)
         )
 
-        window.orderFrontRegardless()
+        if UIAuditMode.isEnabled {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        } else {
+            window.orderFrontRegardless()
+        }
         NotchSpaceManager.shared.notchSpace.windows.insert(window)
 
         // Observe when the window's screen changes so we can update drag detectors
@@ -319,14 +618,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Update the same model that owns this window, then use that exact
         // panel size for both AppKit and the hosted SwiftUI root.
         viewModel.updateMetrics()
+        viewModel.updatePanelSize(for: coordinator.currentView)
         let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
-        window.setFrame(geometry.frame, display: true)
+        let shouldAnimateFrame = IslandMotion.shouldAnimateAppKitStateChanges
+            && window.frame.integral != geometry.frame.integral
+        if shouldAnimateFrame {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = IslandMotion.appKitStateDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(geometry.frame, display: true)
+            }
+        } else {
+            window.setFrame(geometry.frame, display: true)
+        }
         window.alphaValue = 1
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    /// Page selection and its first content measurement can arrive in the
+    /// same run-loop turn. Coalescing them avoids starting a short transition
+    /// to the compact page, then interrupting it with its measured height.
+    @MainActor
+    private func schedulePanelResize() {
+        pendingPanelResize?.cancel()
+        let resize = DispatchWorkItem { [weak self] in
+            self?.adjustWindowPosition()
+        }
+        pendingPanelResize = resize
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16), execute: resize)
+    }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
         installEscapeKeyMonitor()
+        installUIAuditKeyMonitor()
+        notificationObservers.append(NotificationCenter.default.addObserver(
+            forName: .islandPanelSizeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.schedulePanelResize()
+            }
+        })
+        notificationObservers.append(NotificationCenter.default.addObserver(
+            forName: .openMirrorRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.openMirrorFromUserAction()
+        })
+        notificationObservers.append(NotificationCenter.default.addObserver(
+            forName: .closeMirrorRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.closeMirrorFromUserAction()
+        })
         // Clear session-scoped shelf files before any persisted shelf data is used.
         _ = TemporaryFileStorageService.shared
 
@@ -494,7 +840,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if !Defaults[.showOnAllDisplays] {
+        // Audit mode needs one inspectable panel even when the user's
+        // multi-display preference or saved display UUID no longer matches the
+        // attached display. Keep that deterministic test-only path separate
+        // from normal display routing.
+        if UIAuditMode.isEnabled {
+            let viewModel = self.vm
+            let window = createBoringNotchWindow(
+                for: NSScreen.main ?? NSScreen.screens.first!, with: viewModel)
+            self.window = window
+            positionWindow(window, on: NSScreen.main ?? NSScreen.screens.first!, with: viewModel)
+        } else if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm
             let window = createBoringNotchWindow(
                 for: NSScreen.main ?? NSScreen.screens.first!, with: viewModel)
@@ -502,6 +858,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             adjustWindowPosition(changeAlpha: true)
         } else {
             adjustWindowPosition(changeAlpha: true)
+        }
+
+        if UIAuditMode.isEnabled {
+            applyUIAuditState(uiAuditState)
         }
 
         setupDragDetectors()
@@ -521,15 +881,131 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         previousScreens = NSScreen.screens
     }
 
+    @MainActor
+    private func openMirrorFromUserAction() {
+        guard !isScreenLocked else { return }
+        coordinator.currentView = .mirror
+        if vm.notchState == .closed { vm.open() }
+
+        if !vm.isCameraExpanded && !WebcamManager.shared.isSessionRunning {
+            Defaults[.showMirror] = true
+            vm.toggleCameraPreview()
+        }
+    }
+
+    @MainActor
+    private func closeMirrorFromUserAction() {
+        WebcamManager.shared.stopSession()
+        vm.isCameraExpanded = false
+    }
+
+    @MainActor
+    private func applyUIAuditState(_ state: UIAuditState) {
+        UIAuditController.shared.select(state)
+        coordinator.firstLaunch = false
+        coordinator.alwaysShowTabs = true
+        coordinator.stopTimer()
+        vm.isCameraExpanded = false
+        MusicManager.shared.clearAuditPlaybackOverride()
+        MusicManager.shared.isPlaying = false
+        MusicManager.shared.isPlayerIdle = true
+        // Every audit state must be self-contained. Seed these before choosing
+        // a surface so navigation during any audit never falls back to the
+        // user's personal Calendar or clipboard history.
+        CalendarManager.shared.useAuditEvents(UIAuditFixtures.calendarItems())
+        coordinator.useAuditClipboardEntries(UIAuditFixtures.clipboardEntries)
+        ShelfStateViewModel.shared.useAuditItems(UIAuditFixtures.shelfItems)
+
+        switch state {
+        case .home, .accessibility, .camera, .error:
+            coordinator.currentView = .home
+            vm.open()
+        case .calendarStress:
+            coordinator.currentView = .calendar
+            vm.open()
+        case .calendarHomeStress:
+            let tomorrow = Calendar.autoupdatingCurrent.date(byAdding: .day, value: 1, to: .now)!
+            CalendarManager.shared.useAuditEvents(
+                UIAuditFixtures.calendarItems(
+                    reference: tomorrow,
+                    omittingAllDay: true,
+                    longFirstTimedTitle: true
+                )
+            )
+            coordinator.currentView = .home
+            vm.open()
+        case .snippetsStress:
+            coordinator.currentView = .clipboard
+            vm.open()
+        case .snippetsEmpty:
+            coordinator.useAuditClipboardEntries([])
+            coordinator.currentView = .clipboard
+            vm.open()
+        case .shelf:
+            coordinator.currentView = .shelf
+            vm.open()
+        case .timer:
+            coordinator.startTimer(seconds: 10)
+            vm.close()
+        case .media:
+            MusicManager.shared.useAuditPlayback(isPlaying: true)
+            vm.close()
+        case .mediaPlaying, .mediaPaused:
+            MusicManager.shared.useAuditPlayback(isPlaying: state == .mediaPlaying)
+            coordinator.currentView = .home
+            vm.open()
+        case .hover, .closed:
+            vm.close()
+        }
+
+        if state == .camera {
+            vm.isCameraExpanded = true
+        }
+
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func installUIAuditKeyMonitor() {
+        guard UIAuditMode.isEnabled else { return }
+
+        uiAuditKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers.contains([.command, .option]),
+                  let shortcut = event.charactersIgnoringModifiers,
+                  let state = UIAuditState(shortcut: shortcut)
+            else { return event }
+
+            Task { @MainActor in
+                guard let self else { return }
+                self.uiAuditState = state
+                self.applyUIAuditState(state)
+            }
+            return nil
+        }
+    }
+
     private func installEscapeKeyMonitor() {
         escapeKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return }
             Task { @MainActor in
-                guard let self else { return }
-                self.vm.close()
-                self.viewModels.values.forEach { $0.close() }
+                self?.closeMirrorForEscapeIfNeeded()
             }
         }
+        // Global monitors do not receive events sent to this app. The local
+        // companion makes Escape reliable when the island itself is key.
+        localEscapeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            guard self?.closeMirrorForEscapeIfNeeded() == true else { return event }
+            return nil
+        }
+    }
+
+    @MainActor
+    private func closeMirrorForEscapeIfNeeded() -> Bool {
+        guard coordinator.currentView == .mirror else { return false }
+        vm.close()
+        viewModels.values.forEach { $0.close() }
+        return true
     }
 
     func deviceHasNotch() -> Bool {
@@ -620,7 +1096,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             vm.screenUUID = selectedScreen.displayUUID
             vm.updateMetrics()
-            vm.notchSize = vm.closedNotchSize
+            if vm.notchState == .closed {
+                vm.notchSize = vm.closedNotchSize
+            }
 
             if window == nil {
                 window = createBoringNotchWindow(for: selectedScreen, with: vm)

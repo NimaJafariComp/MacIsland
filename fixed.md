@@ -196,9 +196,22 @@ passes. Fresh automated closed and Home captures were visually inspected on the
 Debug app; full `Scripts/validate-xcode.sh` passed (21 XCTest cases). Remaining:
 approved 1× and notchless/external-display hardware is unavailable, so those
 display-mode baselines and richer live media/battery/HUD/camera action drivers
-remain unproven.
+remain unproven. Audit-only `-uiAuditMode YES` now exposes a key, screen-shareable
+panel and deterministic closed/hover/Home/Shelf/timer/media/camera/error/
+accessibility states through `-uiAuditState` or Option-Command-1…9. The state
+matrix and accessibility identifiers are documented in `UI_AUDIT_MODE.md`; its
+focused mapping XCTest passes through the signed `validate-xcode.sh` gate. A
+direct unsigned Xcode Beta test launch still fails through LaunchServices (error
+20), so use the signed gate. A fresh audit screenshot is also blocked until the
+already-running MacIsland instance is quit, because
+macOS routes same-bundle-ID launches to that instance. The preparer now refuses
+that unsafe launch rather than auditing the wrong build.
 
 ### 4. P1 — native-island visual closure
+
+4.0 [x] Two-finger scrolling no longer closes an open island. The close pan
+keeps its deliberate drag path but disables its `scrollWheel` monitor; the
+opening gesture remains unchanged. Settings now states the distinction.
 
 4.1 [~] `IslandMotion` now owns state, interaction, content, and onboarding
 timing, with one explicit policy for nonessential motion. Marquee text resets
@@ -340,7 +353,7 @@ and 28 XCTest cases (2026-07-29). Remaining intentionally unimplemented:
 paste-into-previous-app needs broad Accessibility/keyboard authority, forbidden
 by the project privacy rule; user can paste explicitly after Copy.
 
-5.3 [x] Weather has manual city, Open-Meteo data, cache, unit preference, real
+5.3 [x] Weather defaults to this Mac’s current location, with a Settings city override, Open-Meteo data, cache, unit preference, real
 states, and injected success/failure tests. Cache reuse now requires the same
 normalized city, and in-flight refreshes are cancelled/ignored when superseded
 or disabled. XCTest `testWeatherCacheUsesOnlyTheCurrentCityWithinItsLifetime`

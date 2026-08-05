@@ -16,9 +16,9 @@ enum RepeatMode: Int, Codable {
 struct PlaybackState {
     var bundleIdentifier: String
     var isPlaying: Bool = false
-    var title: String = "I'm Handsome"
-    var artist: String = "Me"
-    var album: String = "Self Love"
+    var title: String = ""
+    var artist: String = ""
+    var album: String = ""
     var currentTime: Double = 0
     var duration: Double = 0
     var playbackRate: Double = 1
@@ -28,6 +28,18 @@ struct PlaybackState {
     var artwork: Data?
     var volume: Double = 0.5
     var isFavorite: Bool = false
+}
+
+enum MediaPresentationPolicy {
+    static func hasTrack(_ state: PlaybackState) -> Bool {
+        let title = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = state.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !title.isEmpty && !artist.isEmpty && title != "Unknown" && artist != "Unknown"
+    }
+
+    static func isIdle(_ state: PlaybackState) -> Bool {
+        !state.isPlaying && !hasTrack(state)
+    }
 }
 
 extension PlaybackState: Equatable {

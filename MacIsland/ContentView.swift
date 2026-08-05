@@ -83,10 +83,12 @@ enum IslandSceneResolver {
 
 @MainActor
 struct ContentView: View {
+    @ObservedObject private var uiAudit = UIAuditController.shared
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @ObservedObject var musicManager = MusicManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
+    @ObservedObject private var notesStore = AppleNotesStore.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -129,7 +131,9 @@ struct ContentView: View {
         case .battery:
             chinWidth = 640
         case .timer:
-            chinWidth += 140
+            chinWidth = ClosedTimerActivityGeometry(
+                physicalBridgeWidth: chinWidth
+            ).contentWidth
         case .media, .face:
             let media = ClosedMediaActivityGeometry(
                 physicalBridgeWidth: vm.closedNotchSize.width,
@@ -185,10 +189,12 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 let mainLayout = IslandSurface(
                     isOpen: vm.notchState == .open,
-                    isHovering: isHovering,
+                    isHovering: isHovering || (UIAuditMode.isEnabled && uiAudit.state == .hover),
                     usesFlushClosedGeometry: islandScene == .collapsed,
-                    openSize: vm.openIslandSize,
-                    closedContentWidth: islandScene == .media ? computedChinWidth : nil,
+                    openSize: vm.currentOpenIslandSize,
+                    closedContentWidth: (islandScene == .media || islandScene == .timer)
+                        ? computedChinWidth
+                        : nil,
                     closedHeight: vm.effectiveClosedNotchHeight,
                     cornerRadiusScaling: Defaults[.cornerRadiusScaling],
                     shape: currentNotchShape,
@@ -210,15 +216,24 @@ struct ContentView: View {
                     // without enlarging or recoloring the physical bridge.
                     .padding(.horizontal, hoverHorizontalInset)
                     .padding(.bottom, hoverBottomInset)
+                    // Open/close is a single physical-surface transition.
+                    // Page sizing deliberately has no SwiftUI animation owner;
+                    // AppKit remains responsible for that separate motion.
+                    .animation(IslandMotion.islandOpenClose, value: vm.notchState)
                     .conditionalModifier(true) { view in
                         return view
-                            // The island's frame and content must share the
-                            // same state transition. Disabling this animation
-                            // made close collapse in a single render pass.
-                            .animation(IslandMotion.state, value: vm.notchState)
+                            // AppKit owns panel-frame motion. Keeping a second
+                            // size animation here causes the SwiftUI surface to
+                            // lag behind the panel and briefly expose the host.
                             .animation(IslandMotion.interaction, value: gestureProgress)
                     }
                     .contentShape(Rectangle())
+                    // Keep the island discoverable as one container without
+                    // flattening the tab controls into its identifier.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("macisland.island")
+                    .accessibilityLabel(vm.notchState == .closed ? "Open MacIsland" : "MacIsland island")
+                    .accessibilityAddTraits(vm.notchState == .closed ? .isButton : [])
                     .onHover { hovering in
                         handleHover(hovering)
                     }
@@ -237,10 +252,9 @@ struct ContentView: View {
                             }
                     }
                     .conditionalModifier(Defaults[.closeGestureEnabled] && Defaults[.enableGestures]) { view in
-                        view
-                            .panGesture(direction: .up) { translation, phase in
-                                handleUpGesture(translation: translation, phase: phase)
-                            }
+                        view.panGesture(direction: .up, capturesScrollWheel: false) { translation, phase in
+                            handleUpGesture(translation: translation, phase: phase)
+                        }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
                         if vm.notchState == .open && !isHovering && !vm.isBatteryPopoverActive {
@@ -249,7 +263,7 @@ struct ContentView: View {
                                 try? await Task.sleep(for: .milliseconds(100))
                                 guard !Task.isCancelled else { return }
                                 await MainActor.run {
-                                    if self.vm.notchState == .open && !self.isHovering && !self.vm.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose {
+                                    if self.vm.notchState == .open && !self.isHovering && !self.vm.isBatteryPopoverActive && !self.vm.isMirrorSessionPinned && !SharingStateManager.shared.preventNotchClose {
                                         self.vm.close()
                                     }
                                 }
@@ -270,10 +284,33 @@ struct ContentView: View {
                                 try? await Task.sleep(for: .milliseconds(100))
                                 guard !Task.isCancelled else { return }
                                 await MainActor.run {
-                                    if !self.vm.isBatteryPopoverActive && !self.isHovering && self.vm.notchState == .open && !SharingStateManager.shared.preventNotchClose {
+                                    if !self.vm.isBatteryPopoverActive && !self.isHovering && self.vm.notchState == .open && !self.vm.isMirrorSessionPinned && !SharingStateManager.shared.preventNotchClose {
                                         self.vm.close()
                                     }
                                 }
+                            }
+                        }
+                    }
+                    .onChange(of: vm.isMirrorSessionPinned) { _, isPinned in
+                        // Once the last Mirror activity ends, return to the
+                        // ordinary hover-dismiss contract. Do not close while
+                        // the pointer is still inside the island.
+                        guard !isPinned, !isHovering, vm.notchState == .open,
+                              !vm.isBatteryPopoverActive,
+                              !SharingStateManager.shared.preventNotchClose
+                        else { return }
+                        hoverTask?.cancel()
+                        hoverTask = Task {
+                            try? await Task.sleep(for: .milliseconds(100))
+                            guard !Task.isCancelled else { return }
+                            await MainActor.run {
+                                guard !self.vm.isMirrorSessionPinned,
+                                      !self.isHovering,
+                                      self.vm.notchState == .open,
+                                      !self.vm.isBatteryPopoverActive,
+                                      !SharingStateManager.shared.preventNotchClose
+                                else { return }
+                                self.vm.close()
                             }
                         }
                     }
@@ -321,6 +358,11 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .allowsHitTesting(!vm.isScreenLocked)
         .environmentObject(vm)
+        // Warm the Notes cache off-screen. Opening the Quick Notes tab should
+        // present cached content immediately rather than a visible loader.
+        .task(priority: .utility) {
+            await notesStore.preload()
+        }
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
 
@@ -352,6 +394,9 @@ struct ContentView: View {
             hoverTask = nil
             anyDropDebounceTask?.cancel()
             anyDropDebounceTask = nil
+        }
+        .onChange(of: coordinator.currentView) { _, _ in
+            NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: vm)
         }
     }
 
@@ -453,20 +498,30 @@ struct ContentView: View {
                                 headerHeight: vm.effectiveClosedNotchHeight,
                                 surfaceHorizontalInset: topCornerRadius
                                     + IslandStyle.openSurfacePadding
-                            )
+                                )
                         )
+                    case .mirror:
+                        MirrorView()
+                    case .calendar:
+                        CalendarView()
                     case .shelf:
                         ShelfView()
                     case .clipboard:
                         ClipboardHistoryView()
+                    case .notes:
+                        QuickNotesView()
                     }
                 }
                 // The panel and header own the available page rect. A tab's
                 // intrinsic size must not enlarge, shift, or clip the island.
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .id(coordinator.currentView)
-                .transition(.opacity.animation(IslandMotion.content))
+                .padding(.top, IslandStyle.headerContentSpacing)
+                // Keep the page host stable while its panel changes size.
+                // Re-identifying and fading this container also tears down
+                // hover tracking, which can make a tab change look like a
+                // close followed by another open.
                 .zIndex(1)
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                 .allowsHitTesting(vm.notchState == .open)
                 .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
             }
@@ -651,12 +706,12 @@ struct ContentView: View {
                     .buttonStyle(.borderless)
                 }
             }
-            .frame(minWidth: 228, minHeight: 40)
-            .padding(.horizontal, 10)
+            .frame(minHeight: ClosedTimerActivityGeometry.controlHeight)
+            .padding(.horizontal, 8)
             .background(Capsule().fill(Color.islandElevatedSurface))
             .overlay(Capsule().stroke(Color.islandBorder, lineWidth: 1))
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 8)
+            .padding(.bottom, ClosedTimerActivityGeometry.bottomInset)
         }
         .foregroundStyle(Color.islandPrimaryText)
         .accessibilityElement(children: .combine)
@@ -700,6 +755,14 @@ struct ContentView: View {
             isHovering = false
             return
         }
+        // Computer Use moves its pointer outside the captured app between
+        // actions. Keep an explicit audit surface open so a visual audit can
+        // navigate between pages; production hover-dismiss behavior is
+        // unchanged.
+        if UIAuditMode.isEnabled {
+            isHovering = hovering
+            return
+        }
         if coordinator.firstLaunch { return }
         hoverTask?.cancel()
         
@@ -739,7 +802,7 @@ struct ContentView: View {
                         self.isHovering = false
                     }
                     
-                    if self.vm.notchState == .open && !self.vm.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose {
+                    if self.vm.notchState == .open && !self.vm.isBatteryPopoverActive && !self.vm.isMirrorSessionPinned && !SharingStateManager.shared.preventNotchClose {
                         self.vm.close()
                     }
                 }
@@ -843,11 +906,18 @@ private struct SystemStateLiveActivity: View {
 
 private struct ClipboardHistoryView: View {
     @ObservedObject private var coordinator = BoringViewCoordinator.shared
-    @State private var query = ""
+    @EnvironmentObject private var vm: BoringViewModel
     @State private var copiedEntryID: ClipboardEntry.ID?
 
     private var entries: [ClipboardEntry] {
-        BoringViewCoordinator.matchingClipboardEntries(coordinator.clipboardEntries, query: query)
+        coordinator.clipboardEntries
+    }
+
+    private func updatePanelHeight() {
+        vm.requestOpenHeight(
+            IslandExpandedPageSizing.snippetsHeight(entryCount: entries.count),
+            for: .clipboard
+        )
     }
 
     var body: some View {
@@ -863,12 +933,13 @@ private struct ClipboardHistoryView: View {
                 }
             }
 
-            if Defaults[.clipboardHistoryEnabled] {
-                TextField("Search copied text", text: $query)
-                    .textFieldStyle(.roundedBorder)
-
+            if Defaults[.clipboardHistoryEnabled] || UIAuditMode.isEnabled {
                 if entries.isEmpty {
-                    ContentUnavailableView("No snippets yet", systemImage: "doc.on.clipboard", description: Text("Copy text to add it here."))
+                    CompactSnippetsEmptyState(
+                        title: "No snippets yet",
+                        message: "Copy text to add it here.",
+                        systemImage: "doc.on.clipboard"
+                    )
                 } else {
                     ScrollView {
                         LazyVGrid(
@@ -925,11 +996,16 @@ private struct ClipboardHistoryView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 120)
+                    .frame(maxHeight: .infinity)
                 }
             } else {
                 ContentUnavailableView("Clipboard history is off", systemImage: "lock", description: Text("Enable it in Shelf settings to capture copied text."))
             }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .onAppear(perform: updatePanelHeight)
+        .onChange(of: entries.count) { _, _ in
+            updatePanelHeight()
         }
         .padding(IslandStyle.modulePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -939,6 +1015,50 @@ private struct ClipboardHistoryView: View {
                 .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// `ContentUnavailableView` is intentionally generous for a full window. The
+/// island already presents a title and search field, so its compact floor needs
+/// a single quiet, readable empty-state row instead.
+private struct CompactSnippetsEmptyState: View {
+    let title: String
+    let message: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(Color.effectiveAccent)
+                .frame(width: 28, height: 28)
+                .background(Color.islandElevatedSurface, in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(IslandTypography.body.weight(.semibold))
+                    .foregroundStyle(Color.islandPrimaryText)
+                Text(message)
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(Color.islandSecondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.islandElevatedSurface,
+            in: RoundedRectangle(cornerRadius: IslandStyle.compactControlCornerRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: IslandStyle.compactControlCornerRadius, style: .continuous)
+                .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title). \(message)")
     }
 }
 

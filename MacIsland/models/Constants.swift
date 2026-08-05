@@ -64,6 +64,20 @@ enum WeatherTemperatureUnit: String, CaseIterable, Identifiable, Defaults.Serial
     var title: String { self == .celsius ? "Celsius (°C)" : "Fahrenheit (°F)" }
 }
 
+enum WeatherLocationMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case automatic
+    case custom
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .automatic: "Automatic (Current Location)"
+        case .custom: "Choose a City"
+        }
+    }
+}
+
 struct TimerPreset: Codable, Hashable, Identifiable, Defaults.Serializable {
     let id: UUID
     let name: String
@@ -87,6 +101,8 @@ struct TimerPreset: Codable, Hashable, Identifiable, Defaults.Serializable {
 // Define notification names at file scope
 extension Notification.Name {
     static let mediaControllerChanged = Notification.Name("mediaControllerChanged")
+    static let openMirrorRequested = Notification.Name("openMirrorRequested")
+    static let closeMirrorRequested = Notification.Name("closeMirrorRequested")
 }
 
 // Media controller types for selection in settings
@@ -235,8 +251,10 @@ extension Defaults.Keys {
 
     // MARK: Weather
     static let weatherEnabled = Key<Bool>("weatherEnabled", default: false)
+    static let weatherLocationMode = Key<WeatherLocationMode>("weatherLocationMode", default: .automatic)
     static let weatherLocationQuery = Key<String>("weatherLocationQuery", default: "")
-    static let weatherTemperatureUnit = Key<WeatherTemperatureUnit>("weatherTemperatureUnit", default: .celsius)
+    static let weatherLocationModeMigrated = Key<Bool>("weatherLocationModeMigrated", default: false)
+    static let weatherTemperatureUnit = Key<WeatherTemperatureUnit>("weatherTemperatureUnit", default: .fahrenheit)
 
     // MARK: Timer
     static let timerCompletionNotifications = Key<Bool>("timerCompletionNotifications", default: true)

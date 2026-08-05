@@ -10,12 +10,22 @@ import Combine
 import CoreAudio
 import Foundation
 
+/// A real Core Audio output route. AirPlay outputs appear here when macOS has
+/// made them available as an audio device; MacIsland never fabricates routes.
+struct AudioOutputRoute: Identifiable, Equatable {
+    let id: AudioObjectID
+    let name: String
+    let isAirPlay: Bool
+}
+
 final class VolumeManager: NSObject, ObservableObject {
     static let shared = VolumeManager()
 
     @Published private(set) var rawVolume: Float = 0
     @Published private(set) var isMuted: Bool = false
     @Published private(set) var lastChangeAt: Date = .distantPast
+    @Published private(set) var outputRoutes: [AudioOutputRoute] = []
+    @Published private(set) var currentOutputRouteID: AudioObjectID = kAudioObjectUnknown
 
     let visibleDuration: TimeInterval = 1.2
 
@@ -29,6 +39,7 @@ final class VolumeManager: NSObject, ObservableObject {
         super.init()
         setupAudioListener()
         fetchCurrentVolume()
+        refreshOutputRoutes()
     }
 
     var shouldShowOverlay: Bool { Date().timeIntervalSince(lastChangeAt) < visibleDuration }
@@ -71,6 +82,59 @@ final class VolumeManager: NSObject, ObservableObject {
     }
     
     func refresh() { fetchCurrentVolume() }
+
+    /// Changes the same system default-output setting used by Sound settings.
+    /// This is intentionally a user action from the route picker, never an
+    /// automatic media-side effect.
+    @discardableResult
+    func selectOutputRoute(_ route: AudioOutputRoute) -> Bool {
+        var routeID = route.id
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioObjectID>.size),
+            &routeID
+        )
+        guard status == noErr else { return false }
+        refreshOutputRoutes()
+        fetchCurrentVolume()
+        return true
+    }
+
+    func refreshOutputRoutes() {
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var byteCount: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(systemObject, &devicesAddress, 0, nil, &byteCount) == noErr else {
+            return
+        }
+
+        let count = Int(byteCount) / MemoryLayout<AudioObjectID>.size
+        var deviceIDs = Array(repeating: AudioObjectID(kAudioObjectUnknown), count: count)
+        guard AudioObjectGetPropertyData(systemObject, &devicesAddress, 0, nil, &byteCount, &deviceIDs) == noErr else {
+            return
+        }
+
+        let routes = deviceIDs.compactMap { route(for: $0) }.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        let activeID = systemOutputDeviceID()
+        DispatchQueue.main.async {
+            self.outputRoutes = routes
+            self.currentOutputRouteID = activeID
+        }
+    }
 
     func adjustRelative(delta: Float32) {
         if isMutedInternal() { toggleMuteInternal() }
@@ -118,6 +182,57 @@ final class VolumeManager: NSObject, ObservableObject {
         )
         if status != noErr { return kAudioObjectUnknown }
         return defaultDeviceID
+    }
+
+    private func route(for deviceID: AudioObjectID) -> AudioOutputRoute? {
+        var outputStreamsAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var streamBytes: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &outputStreamsAddress, 0, nil, &streamBytes) == noErr,
+              streamBytes > 0,
+              let name = stringProperty(kAudioObjectPropertyName, for: deviceID)
+        else {
+            return nil
+        }
+
+        var transportAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transport: UInt32 = 0
+        var transportBytes = UInt32(MemoryLayout<UInt32>.size)
+        let hasTransport = AudioObjectGetPropertyData(
+            deviceID,
+            &transportAddress,
+            0,
+            nil,
+            &transportBytes,
+            &transport
+        ) == noErr
+
+        return AudioOutputRoute(
+            id: deviceID,
+            name: name,
+            isAirPlay: hasTransport && transport == kAudioDeviceTransportTypeAirPlay
+        )
+    }
+
+    private func stringProperty(_ selector: AudioObjectPropertySelector, for deviceID: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: CFString = "" as CFString
+        var byteCount = UInt32(MemoryLayout<CFString?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &byteCount, &name) == noErr else {
+            return nil
+        }
+        return name as String
     }
 
     private func fetchCurrentVolume() {
@@ -181,6 +296,18 @@ final class VolumeManager: NSObject, ObservableObject {
             AudioObjectID(kAudioObjectSystemObject), &defaultDevAddr, nil
         ) { _, _ in
             self.fetchCurrentVolume()
+            self.refreshOutputRoutes()
+        }
+
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, nil
+        ) { _, _ in
+            self.refreshOutputRoutes()
         }
 
         var masterAddr = AudioObjectPropertyAddress(
@@ -373,4 +500,3 @@ final class VolumeManager: NSObject, ObservableObject {
 extension Array where Element == Float32 {
     fileprivate var average: Float32? { isEmpty ? nil : reduce(0, +) / Float32(count) }
 }
-

@@ -6,6 +6,7 @@
 //  Modified by Harsh Vardhan Goswami & Richard Kunkli & Mustafa Ramadan
 //
 
+import AppKit
 import Combine
 import Defaults
 import SwiftUI
@@ -16,6 +17,7 @@ struct MusicPlayerView: View {
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject private var musicManager = MusicManager.shared
     let albumArtNamespace: Namespace.ID
+    let moduleHeight: CGFloat?
 
     private var contextualBorder: Color {
         guard musicManager.isPlaying, Defaults[.playerColorTinting] else {
@@ -44,7 +46,12 @@ struct MusicPlayerView: View {
                 .padding(IslandStyle.modulePadding)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: moduleHeight,
+            maxHeight: moduleHeight,
+            alignment: .topLeading
+        )
         .background(
             RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
                 .fill(Color.islandModuleSurface)
@@ -52,6 +59,12 @@ struct MusicPlayerView: View {
         .overlay {
             RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
                 .stroke(contextualBorder, lineWidth: IslandStyle.hairlineWidth)
+        }
+        .overlay(alignment: .topTrailing) {
+            if !musicManager.isPlayerIdle || musicManager.isPlaying {
+                AudioOutputRoutePicker()
+                    .padding(8)
+            }
         }
     }
 }
@@ -183,22 +196,26 @@ struct MusicControlsView: View {
     @Default(.musicControlSlotLimit) private var slotLimit
 
     var body: some View {
-        VStack(alignment: .leading) {
-            songInfoAndSlider
-            slotToolbar
+        VStack(alignment: .leading, spacing: 4) {
+            songInfo
+            HStack(spacing: IslandStyle.compactControlSpacing) {
+                musicSlider
+                slotToolbar
+            }
         }
         .buttonStyle(PlainButtonStyle())
     }
 
-    private var songInfoAndSlider: some View {
+    private var songInfo: some View {
         GeometryReader { geo in
-            VStack(alignment: .leading, spacing: 4) {
-                songInfo(width: geo.size.width)
-                musicSlider
-            }
+            songInfo(width: geo.size.width)
         }
-        .padding(.top, 10)
+        .frame(height: 34)
+        .padding(.top, 4)
         .padding(.leading, 5)
+        // The top-right output control overlays the player card. Preserve a
+        // compact clearance so long titles never pass underneath it.
+        .padding(.trailing, 34)
     }
 
     private func songInfo(width: CGFloat) -> some View {
@@ -274,14 +291,14 @@ struct MusicControlsView: View {
     }
 
     private var slotToolbar: some View {
-        let slots = activeSlots
-        return HStack(spacing: 6) {
+        let slots = activeSlots.filter { $0 != .none }
+        return HStack(spacing: 4) {
             ForEach(Array(slots.enumerated()), id: \.offset) { index, slot in
                 slotView(for: slot)
                     .frame(alignment: .center)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .center)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var activeSlots: [MusicControlButton] {
@@ -298,23 +315,23 @@ struct MusicControlsView: View {
     private func slotView(for slot: MusicControlButton) -> some View {
         switch slot {
         case .shuffle:
-            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .islandCritical : .islandPrimaryText, scale: .medium) {
+            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .islandCritical : .islandPrimaryText, scale: .medium, buttonSize: 28) {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
-            HoverButton(icon: "backward.fill", scale: .medium) {
+            HoverButton(icon: "backward.fill", scale: .medium, buttonSize: 28) {
                 MusicManager.shared.previousTrack()
             }
         case .playPause:
-            HoverButton(icon: musicManager.isPlaying ? "pause.fill" : "play.fill", scale: .large) {
+            HoverButton(icon: musicManager.isPlaying ? "pause.fill" : "play.fill", scale: .large, buttonSize: 32) {
                 MusicManager.shared.togglePlay()
             }
         case .next:
-            HoverButton(icon: "forward.fill", scale: .medium) {
+            HoverButton(icon: "forward.fill", scale: .medium, buttonSize: 28) {
                 MusicManager.shared.nextTrack()
             }
         case .repeatMode:
-            HoverButton(icon: repeatIcon, iconColor: repeatIconColor, scale: .medium) {
+            HoverButton(icon: repeatIcon, iconColor: repeatIconColor, scale: .medium, buttonSize: 28) {
                 MusicManager.shared.toggleRepeat()
             }
         case .volume:
@@ -322,15 +339,18 @@ struct MusicControlsView: View {
         case .favorite:
             FavoriteControlButton()
         case .goBackward:
-            HoverButton(icon: "gobackward.15", scale: .medium) {
+            HoverButton(icon: "gobackward.15", scale: .medium, buttonSize: 28) {
                 MusicManager.shared.skip(seconds: -15)
             }
         case .goForward:
-            HoverButton(icon: "goforward.15", scale: .medium) {
+            HoverButton(icon: "goforward.15", scale: .medium, buttonSize: 28) {
                 MusicManager.shared.skip(seconds: 15)
             }
         case .none:
-            Color.clear.frame(height: 1)
+            Color.clear.frame(
+                width: IslandStyle.minimumHitTarget,
+                height: IslandStyle.minimumHitTarget
+            )
         }
     }
 
@@ -352,6 +372,81 @@ struct MusicControlsView: View {
         case .all, .one:
             return .islandCritical
         }
+    }
+}
+
+/// SwiftUI owns the menu state; Core Audio owns the system route list and the
+/// default-output change. This is a public macOS route picker, not a private
+/// Control Center imitation.
+private struct AudioOutputRoutePicker: View {
+    @ObservedObject private var volumeManager = VolumeManager.shared
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            volumeManager.refreshOutputRoutes()
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "speaker.wave.2.circle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.islandPrimaryText)
+                .frame(width: 26, height: 26)
+                .background(Color.islandElevatedSurface, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Choose audio output")
+        .accessibilityLabel("Choose audio output")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Audio Output")
+                    .font(.headline)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+
+                if volumeManager.outputRoutes.isEmpty {
+                    Text("No audio outputs available")
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                } else {
+                    ForEach(volumeManager.outputRoutes) { route in
+                        Button {
+                            if volumeManager.selectOutputRoute(route) {
+                                isPresented = false
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: route.isAirPlay ? "airplayaudio" : "speaker.wave.2")
+                                    .frame(width: 16)
+                                Text(route.name)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                if route.id == volumeManager.currentOutputRouteID {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(route.id == volumeManager.currentOutputRouteID)
+                    }
+                }
+
+                Divider()
+                Button("Sound Settings…") {
+                    guard let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") else { return }
+                    NSWorkspace.shared.open(url)
+                    isPresented = false
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .frame(width: 230)
+        }
+        .onAppear { volumeManager.refreshOutputRoutes() }
     }
 }
 
@@ -480,6 +575,7 @@ struct NotchHomeView: View {
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject private var uiAudit = UIAuditController.shared
     let albumArtNamespace: Namespace.ID
     let availableSize: CGSize
 
@@ -495,7 +591,8 @@ struct NotchHomeView: View {
     }
 
     private var shouldShowCamera: Bool {
-        Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
+        (Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded)
+            || (UIAuditMode.isEnabled && uiAudit.state == .camera)
     }
 
     private var layoutBudget: HomeLayoutBudget {
@@ -503,7 +600,7 @@ struct NotchHomeView: View {
             availableSize: availableSize,
             wantsCalendar: Defaults[.showCalendar],
             wantsCamera: shouldShowCamera,
-            showsWeather: Defaults[.weatherEnabled]
+            showsWeather: Defaults[.weatherEnabled] || (UIAuditMode.isEnabled && uiAudit.state == .error)
         )
     }
 
@@ -514,13 +611,16 @@ struct NotchHomeView: View {
             HomeAmbientBackdrop()
 
             VStack(spacing: IslandStyle.homeSectionSpacing) {
-                if Defaults[.weatherEnabled] {
+                if Defaults[.weatherEnabled] || (UIAuditMode.isEnabled && uiAudit.state == .error) {
                     HomeWeatherModule()
                         .frame(height: IslandStyle.homeWeatherHeight)
                 }
 
                 HStack(alignment: .top, spacing: IslandStyle.homeModuleSpacing) {
-                    MusicPlayerView(albumArtNamespace: albumArtNamespace)
+                    MusicPlayerView(
+                        albumArtNamespace: albumArtNamespace,
+                        moduleHeight: budget.moduleHeight
+                    )
                         .frame(
                             width: budget.mediaWidth,
                             height: budget.moduleHeight,
@@ -528,7 +628,7 @@ struct NotchHomeView: View {
                         )
 
                     if let calendarWidth = budget.calendarWidth {
-                        HomeCalendarCard()
+                        HomeCalendarCard(moduleHeight: budget.moduleHeight)
                             .frame(width: calendarWidth, height: budget.moduleHeight)
                             .onHover { isHovering in
                                 vm.isHoveringCalendar = isHovering
@@ -606,10 +706,26 @@ private struct HomeAmbientBackdrop: View {
 
 private struct HomeWeatherModule: View {
     @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @ObservedObject private var uiAudit = UIAuditController.shared
 
     var body: some View {
+        Button(action: openWeather) {
+            weatherContent
+        }
+        .buttonStyle(.plain)
+        .help("Open Weather")
+        .accessibilityLabel("Open Weather")
+        .accessibilityHint("Opens the Weather app")
+        .contentShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var weatherContent: some View {
         Group {
-            switch coordinator.weatherStatus {
+            if UIAuditMode.isEnabled && uiAudit.state == .error {
+                Label("Audit error: weather unavailable", systemImage: "exclamationmark.triangle")
+            } else {
+                switch coordinator.weatherStatus {
             case .ready:
                 if let snapshot = coordinator.weatherSnapshot {
                     Label(
@@ -618,11 +734,19 @@ private struct HomeWeatherModule: View {
                     )
                 }
             case .loading:
-                Label("Updating weather…", systemImage: "arrow.triangle.2.circlepath")
+                if let snapshot = coordinator.weatherSnapshot {
+                    Label(
+                        "\(snapshot.location) · \(snapshot.formattedTemperature(in: Defaults[.weatherTemperatureUnit])) · \(weatherDescription(for: snapshot.weatherCode))",
+                        systemImage: weatherSymbol(for: snapshot.weatherCode)
+                    )
+                } else {
+                    Label("Weather will appear here", systemImage: "cloud.sun")
+                }
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle")
             case .idle:
                 Label("Choose a city in Settings", systemImage: "cloud.sun")
+            }
             }
         }
         .font(.caption.weight(.medium))
@@ -639,7 +763,10 @@ private struct HomeWeatherModule: View {
                 .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear { coordinator.refreshWeather() }
+    }
+
+    private func openWeather() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Weather.app"))
     }
 
     private func weatherSymbol(for code: Int) -> String {

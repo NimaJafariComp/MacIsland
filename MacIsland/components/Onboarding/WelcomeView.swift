@@ -26,6 +26,10 @@ struct WelcomeView: View {
                 Text("Welcome to MacIsland")
                     .font(.title2.weight(.semibold))
 
+                Text("by Nima Jafari")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+
                 Text("Media, schedule, files, and system controls—built into your MacBook’s notch.")
                     .font(.body)
                     .foregroundStyle(.secondary)

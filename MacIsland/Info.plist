@@ -4,6 +4,14 @@
 <dict>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>MacIsland uses your current location to show local weather when Automatic location is selected.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>MacIsland uses your current location to show local weather when Automatic location is selected.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>MacIsland by Nima Jafari uses the camera only while you open the Mirror feature.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>MacIsland by Nima Jafari uses Apple Events only for connected features you allow during setup, such as saving a Quick Note in Notes or controlling your chosen media app.</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict/>

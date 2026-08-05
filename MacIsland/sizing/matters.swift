@@ -54,6 +54,34 @@ enum IslandMotion {
             : .smooth(duration: durationBudget(for: .state, reduceMotion: false))
     }
 
+    /// The closed bridge and expanded island are one physical surface. A
+    /// critically damped spring gives hover open/close the continuous,
+    /// Dynamic-Island-like response without overshooting into the menu bar.
+    static var islandOpenClose: Animation {
+        reduceMotion
+            ? .linear(duration: durationBudget(for: .state, reduceMotion: true))
+            : .snappy(duration: 0.34, extraBounce: 0)
+    }
+
+    /// AppKit owns the transparent panel frame while SwiftUI owns the island
+    /// surface inside it. Both must use the same timing budget or a dynamic
+    /// page height change appears as two separate jumps.
+    static var appKitStateDuration: TimeInterval {
+        appKitStateDuration(reduceMotion: reduceMotion)
+    }
+
+    static var shouldAnimateAppKitStateChanges: Bool {
+        shouldAnimateAppKitStateChanges(reduceMotion: reduceMotion)
+    }
+
+    static func appKitStateDuration(reduceMotion: Bool) -> TimeInterval {
+        durationBudget(for: .state, reduceMotion: reduceMotion)
+    }
+
+    static func shouldAnimateAppKitStateChanges(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+
     static var interaction: Animation {
         reduceMotion
             ? .linear(duration: durationBudget(for: .interaction, reduceMotion: true))
@@ -93,6 +121,9 @@ enum IslandStyle {
     /// Applied inside the open silhouette after its content has been laid out.
     /// Every expanded page must reserve it before choosing module heights.
     static let openSurfacePadding: CGFloat = 12
+    /// Separates the fixed hardware/header lane from an expanded page without
+    /// allowing individual pages to invent their own vertical offsets.
+    static let headerContentSpacing: CGFloat = 8
     /// A small overhang makes the rendered bridge meet, rather than cover, the
     /// physical camera housing. Keep this independent of corner radii.
     static let closedWingWidth: CGFloat = 4
@@ -128,7 +159,13 @@ enum IslandStyle {
     ) -> CGSize {
         CGSize(
             width: max(0, openIslandSize.width - surfaceHorizontalInset * 2),
-            height: max(0, openIslandSize.height - max(24, headerHeight) - openSurfacePadding)
+            height: max(
+                0,
+                openIslandSize.height
+                    - max(24, headerHeight)
+                    - headerContentSpacing
+                    - openSurfacePadding
+            )
         )
     }
 
@@ -239,10 +276,57 @@ struct HomeLayoutBudget: Equatable {
 let downloadSneakSize: CGSize = .init(width: 65, height: 1)
 let batterySneakSize: CGSize = .init(width: 160, height: 1)
 
-// Preserve Boring Notch's proven panel envelope.  Individual pages may choose
-// their internal layout, but they must never resize or re-anchor the window.
+// Preserve Boring Notch's compact panel envelope by default. Calendar may use
+// a taller, display-capped surface so its schedule remains readable.
 let shadowPadding: CGFloat = 20
-let preferredOpenIslandSize = CGSize(width: 640, height: 190)
+// The 580-point shared expanded shell removes unused horizontal envelope while
+// page-specific content remains adaptive at narrow widths.
+let preferredOpenIslandSize = CGSize(width: 580, height: 190)
+enum IslandExpandedPageSizing {
+    static let compactHeight = preferredOpenIslandSize.height
+    /// Calendar needs a slightly taller floor than other expanded pages so an
+    /// empty or light day still has breathing room beneath its date strip.
+    static let calendarMinimumHeight: CGFloat = 220
+    static let snippetsMaximumHeight: CGFloat = 440
+    static let notesMinimumHeight: CGFloat = 260
+    static let notesMaximumHeight: CGFloat = 420
+
+    static func notesHeight(recentNoteCount: Int) -> CGFloat {
+        // Three recent rows need a modest, intentional lower inset—not the
+        // large unused band created by the previous generic tall-page value.
+        recentNoteCount == 0 ? notesMinimumHeight : 412
+    }
+    /// Mirror is a visual destination, not a compact information card. It
+    /// grows to give the preview useful presence, while `BoringViewModel`
+    /// applies the same display-relative 65% ceiling used by Calendar.
+    static let mirrorMinimumHeight: CGFloat = 360
+    static let mirrorPreferredHeight: CGFloat = 540
+    static let mirrorMaximumHeight: CGFloat = 900
+    /// Calendar grows only to a display-relative cap in `BoringViewModel`.
+    /// This static ceiling is only a high safety bound. The active panel is
+    /// capped just beyond half of the current display in `BoringViewModel`.
+    static let calendarMaximumHeight: CGFloat = 900
+    /// Island shell + header + date wheel + their intentional separation.
+    static let calendarVerticalChrome: CGFloat = 106
+    /// Measured compact event/reminder row rhythm, including the divider.
+    static let calendarRowHeight: CGFloat = 32
+
+    static func snippetsHeight(entryCount: Int) -> CGFloat {
+        let rows = CGFloat(max(1, (entryCount + 1) / 2))
+        // The compact history no longer has a search field. Keep just the
+        // title/section rhythm plus its measured row grid, rather than leaving
+        // a search-field-sized blank strip beneath the final row.
+        return min(snippetsMaximumHeight, max(compactHeight, 98 + rows * 56))
+    }
+
+    static func calendarHeight(itemCount: Int) -> CGFloat {
+        let rows = CGFloat(max(1, itemCount))
+        return min(
+            calendarMaximumHeight,
+            max(calendarMinimumHeight, calendarVerticalChrome + rows * calendarRowHeight)
+        )
+    }
+}
 let cornerRadiusInsets: (opened: (top: CGFloat, bottom: CGFloat), closed: (top: CGFloat, bottom: CGFloat)) = (opened: (top: 19, bottom: 24), closed: (top: 6, bottom: 14))
 
 enum MusicPlayerImageSizes {
@@ -321,6 +405,22 @@ struct ClosedMediaActivityGeometry: Equatable {
 
     var totalWidth: CGFloat {
         bridgeWidth + wingWidth * 2
+    }
+}
+
+/// Countdown controls belong below the hardware bridge, but should not expand
+/// the closed island to the broad media-activity width. The minimum supports a
+/// stopwatch value and its pause/resume action while preserving the compact
+/// notch silhouette on narrow displays.
+struct ClosedTimerActivityGeometry: Equatable {
+    static let minimumContentWidth: CGFloat = 176
+    static let controlHeight: CGFloat = 32
+    static let bottomInset: CGFloat = 6
+
+    let contentWidth: CGFloat
+
+    init(physicalBridgeWidth: CGFloat) {
+        contentWidth = max(physicalBridgeWidth, Self.minimumContentWidth)
     }
 }
 

@@ -53,6 +53,7 @@ class BoringNotchSkyLightWindow: NSPanel {
     
     private func configureWindow() {
         isFloatingPanel = true
+        becomesKeyOnlyIfNeeded = false
         isOpaque = false
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
@@ -86,7 +87,9 @@ class BoringNotchSkyLightWindow: NSPanel {
     }
     
     private func updateSharingType() {
-        if Defaults[.hideFromScreenRecording] {
+        if UIAuditMode.isEnabled {
+            sharingType = .readWrite
+        } else if Defaults[.hideFromScreenRecording] {
             sharingType = .none
         } else {
             sharingType = .readWrite
@@ -109,6 +112,17 @@ class BoringNotchSkyLightWindow: NSPanel {
     
     private var observers: Set<AnyCancellable> = []
     
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    // Keep the alternate SkyLight panel consistent with the standard panel:
+    // controls may need the responder chain, especially the Quick Notes editor.
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    override func sendEvent(_ event: NSEvent) {
+        // Keep the click that selects a text editor intact while promoting the
+        // borderless floating panel into the key responder chain.
+        if event.type == .leftMouseDown, !isKeyWindow {
+            makeKey()
+        }
+        super.sendEvent(event)
+    }
 }

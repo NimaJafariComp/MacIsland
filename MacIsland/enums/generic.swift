@@ -8,6 +8,10 @@
 import Foundation
 import Defaults
 
+extension Notification.Name {
+    static let islandPanelSizeDidChange = Notification.Name("com.macisland.islandPanelSizeDidChange")
+}
+
 public enum Style {
     case notch
     case floating
@@ -24,10 +28,14 @@ public enum NotchState {
     case open
 }
 
-public enum NotchViews {
+public enum NotchViews: Hashable {
     case home
+    case mirror
+    /// Audit-only route for exercising Calendar's dense event list.
+    case calendar
     case shelf
     case clipboard
+    case notes
 }
 
 enum SettingsEnum {

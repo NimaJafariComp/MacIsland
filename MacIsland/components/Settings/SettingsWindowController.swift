@@ -10,6 +10,10 @@ import SwiftUI
 import Defaults
 import Sparkle
 
+extension Notification.Name {
+    static let settingsWindowDidClose = Notification.Name("com.macisland.settingsWindowDidClose")
+}
+
 class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
     private var updaterController: SPUStandardUpdaterController?
@@ -110,6 +114,7 @@ class SettingsWindowController: NSWindowController {
 extension SettingsWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         relinquishFocus()
+        NotificationCenter.default.post(name: .settingsWindowDidClose, object: self)
     }
     
     func windowShouldClose(_ sender: NSWindow) -> Bool {

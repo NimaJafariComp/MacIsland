@@ -19,7 +19,7 @@ struct ShelfView: View {
     var body: some View {
         HStack(spacing: 12) {
             FileShareView()
-                .aspectRatio(1, contentMode: .fit)
+                .frame(width: 96)
                 .environmentObject(vm)
             panel
                 .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in

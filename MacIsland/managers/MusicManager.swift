@@ -20,6 +20,7 @@ class MusicManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var controllerCancellables = Set<AnyCancellable>()
     private var debounceIdleTask: Task<Void, Never>?
+    private var nowPlayingFallbackWorkItem: DispatchWorkItem?
 
     // Helper to check if macOS has removed support for NowPlayingController
     public private(set) var isNowPlayingDeprecated: Bool = false
@@ -55,6 +56,10 @@ class MusicManager: ObservableObject {
     @Published private(set) var activeMediaSource: MediaControllerType = .nowPlaying
     @Published private(set) var mediaFallbackMessage: String?
 
+    // UI audit media fixtures must not be replaced by the real Now Playing
+    // publisher while an audit state is being inspected.
+    private var isAuditPlaybackOverrideActive = false
+
     private var artworkData: Data? = nil
 
     // Store last values at the time artwork was changed
@@ -68,6 +73,32 @@ class MusicManager: ObservableObject {
 
     @Published var isTransitioning: Bool = false
     private var transitionWorkItem: DispatchWorkItem?
+
+    // MARK: - UI Audit Playback Override
+    @MainActor
+    func useAuditPlayback(isPlaying: Bool) {
+        isAuditPlaybackOverrideActive = true
+        songTitle = "Audit Track"
+        artistName = "MacIsland"
+        album = "Audit Media"
+        self.isPlaying = isPlaying
+        isPlayerIdle = false
+        songDuration = 300
+        elapsedTime = 73
+        playbackRate = isPlaying ? 1 : 0
+        timestampDate = .now
+        // Keep a stable, visible provider treatment in audit screenshots
+        // without consulting the user's live Now Playing source.
+        bundleIdentifier = "com.spotify.client"
+        activeMediaSource = .spotify
+        volumeControlSupported = true
+        usingAppIconForArtwork = false
+    }
+
+    @MainActor
+    func clearAuditPlaybackOverride() {
+        isAuditPlaybackOverrideActive = false
+    }
 
     // MARK: - Initialization
     init() {
@@ -99,6 +130,7 @@ class MusicManager: ObservableObject {
     
     public func destroy() {
         debounceIdleTask?.cancel()
+        nowPlayingFallbackWorkItem?.cancel()
         cancellables.removeAll()
         controllerCancellables.removeAll()
         flipWorkItem?.cancel()
@@ -155,13 +187,21 @@ class MusicManager: ObservableObject {
         let preferredType = Defaults[.mediaController]
         print("Preferred Media Controller: \(preferredType)")
 
-        // If NowPlaying is deprecated but that's the preference, use Apple Music instead
-        let controllerType = (self.isNowPlayingDeprecated && preferredType == .nowPlaying)
-            ? .appleMusic
-            : preferredType
+        // A deprecated generic Now Playing route must not force users into
+        // Apple Music when Spotify is the active player. Keep explicit source
+        // preferences intact, but choose the running supported provider for
+        // the automatic/default route.
+        let controllerType: MediaControllerType
+        if preferredType == .nowPlaying, isNowPlayingDeprecated {
+            controllerType = runningDirectMediaController() ?? .appleMusic
+        } else {
+            controllerType = preferredType
+        }
 
         if let controller = createController(for: controllerType) {
-            mediaFallbackMessage = controllerType == preferredType ? nil : "Now Playing unavailable; using Apple Music."
+            mediaFallbackMessage = controllerType == preferredType
+                ? nil
+                : "Now Playing unavailable; using \(controllerType.rawValue)."
             setActiveController(controller)
         } else if controllerType != .appleMusic, let fallbackController = createController(for: .appleMusic) {
             // Fallback to Apple Music if preferred controller couldn't be created
@@ -187,17 +227,69 @@ class MusicManager: ObservableObject {
 
         // Get current state from active controller
         forceUpdate()
+        scheduleNowPlayingFallbackIfNeeded()
+    }
+
+    private func runningDirectMediaController() -> MediaControllerType? {
+        let runningBundleIdentifiers = Set(
+            NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
+        )
+
+        if runningBundleIdentifiers.contains("com.spotify.client") {
+            return .spotify
+        }
+        if runningBundleIdentifiers.contains("com.apple.Music") {
+            return .appleMusic
+        }
+        return nil
+    }
+
+    private var hasUsablePublishedTrack: Bool {
+        let title = songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = artistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !title.isEmpty && !artist.isEmpty
+            && title != "Nothing Playing" && title != "Unknown"
+            && artist != "Start audio in a supported app" && artist != "Unknown"
+    }
+
+    private func scheduleNowPlayingFallbackIfNeeded() {
+        nowPlayingFallbackWorkItem?.cancel()
+
+        guard Defaults[.mediaController] == .nowPlaying,
+              activeMediaSource == .nowPlaying,
+              !isNowPlayingDeprecated
+        else { return }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.activateDirectProviderFallbackIfNeeded()
+        }
+        nowPlayingFallbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+
+    private func activateDirectProviderFallbackIfNeeded() {
+        guard !isAuditPlaybackOverrideActive,
+              Defaults[.mediaController] == .nowPlaying,
+              activeMediaSource == .nowPlaying,
+              !hasUsablePublishedTrack,
+              let fallbackType = runningDirectMediaController(),
+              let fallbackController = createController(for: fallbackType)
+        else { return }
+
+        mediaFallbackMessage = "Now Playing did not provide track details; using \(fallbackType.rawValue)."
+        setActiveController(fallbackController)
     }
 
     // MARK: - Update Methods
     @MainActor
     private func updateFromPlaybackState(_ state: PlaybackState) {
+        guard !isAuditPlaybackOverrideActive else { return }
+
         // Check for playback state changes (playing/paused)
         if state.isPlaying != self.isPlaying {
             NSLog("Playback state changed: \(state.isPlaying ? "Playing" : "Paused")")
             withAnimation(IslandMotion.content) {
                 self.isPlaying = state.isPlaying
-                self.updateIdleState(state: state.isPlaying)
             }
 
             if state.isPlaying && !state.title.isEmpty && !state.artist.isEmpty {
@@ -298,6 +390,8 @@ class MusicManager: ObservableObject {
         if volumeChanged {
             self.volume = state.volume
         }
+
+        updateIdleState(state)
         
         self.timestampDate = state.lastUpdated
     }
@@ -546,19 +640,12 @@ class MusicManager: ObservableObject {
         }
     }
 
-    private func updateIdleState(state: Bool) {
-        if state {
-            isPlayerIdle = false
-            debounceIdleTask?.cancel()
-        } else {
-            debounceIdleTask?.cancel()
-            debounceIdleTask = Task { [weak self] in
-                guard let self = self else { return }
-                try? await Task.sleep(for: .seconds(Defaults[.waitInterval]))
-                withAnimation(IslandMotion.content) {
-                    self.isPlayerIdle = !self.isPlaying
-                }
-            }
+    private func updateIdleState(_ state: PlaybackState) {
+        guard !isAuditPlaybackOverrideActive else { return }
+
+        debounceIdleTask?.cancel()
+        withAnimation(IslandMotion.content) {
+            isPlayerIdle = MediaPresentationPolicy.isIdle(state)
         }
     }
 
@@ -691,6 +778,8 @@ class MusicManager: ObservableObject {
     }
 
     func forceUpdate() {
+        guard !isAuditPlaybackOverrideActive else { return }
+
         // Request immediate update from the active controller
         Task { [weak self] in
             if self?.activeController?.isActive() == true {
@@ -705,6 +794,8 @@ class MusicManager: ObservableObject {
     
     
     func syncVolumeFromActiveApp() async {
+        guard !isAuditPlaybackOverrideActive else { return }
+
         // Check if bundle identifier is valid and if the app is actually running
         guard let bundleID = bundleIdentifier, !bundleID.isEmpty,
               NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleID }) else { return }

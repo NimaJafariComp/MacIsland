@@ -11,13 +11,15 @@ struct HoverButton: View {
     var icon: String
     var iconColor: Color = .islandPrimaryText
     var scale: Image.Scale = .medium
+    /// Optional compact width for dense contextual toolbars.
+    var buttonSize: CGFloat? = nil
     var action: () -> Void
     var contentTransition: ContentTransition = .symbolEffect;
     
     @State private var isHovering = false
 
     var body: some View {
-        let size = CGFloat(scale == .large ? 40 : IslandStyle.minimumHitTarget)
+        let size = buttonSize ?? CGFloat(scale == .large ? 40 : IslandStyle.minimumHitTarget)
         
         Button(action: action) {
             Image(systemName: icon)

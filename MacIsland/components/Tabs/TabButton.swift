@@ -11,6 +11,7 @@ struct TabButton: View {
     let label: String
     let icon: String
     let selected: Bool
+    let width: CGFloat
     let onClick: () -> Void
     @State private var isHovering = false
     
@@ -19,7 +20,7 @@ struct TabButton: View {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: selected ? .semibold : .medium))
                 .frame(
-                    width: IslandStyle.minimumHitTarget,
+                    width: width,
                     height: IslandStyle.headerControlHeight
                 )
                 .background {
@@ -43,7 +44,7 @@ struct TabButton: View {
 }
 
 #Preview {
-    TabButton(label: "Home", icon: "tray.fill", selected: true) {
+    TabButton(label: "Home", icon: "tray.fill", selected: true, width: IslandStyle.minimumHitTarget) {
         print("Tapped")
     }
 }

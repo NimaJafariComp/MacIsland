@@ -5,8 +5,27 @@
 //  Created by Harsh Vardhan  Goswami  on 08/09/24.
 //
 
+import AppKit
 import Defaults
 import SwiftUI
+
+enum CalendarReminderPresentation {
+    static func rowLabel(title: String) -> String {
+        "Reminder: \(title)"
+    }
+
+    static func toggleLabel(title: String, completed: Bool) -> String {
+        "Mark \(title) as \(completed ? "incomplete" : "complete")"
+    }
+}
+
+enum HomeCalendarSummaryPresentation {
+    static func countLabel(itemCount: Int, reminderCount: Int) -> String {
+        let itemText = "\(itemCount) \(itemCount == 1 ? "item" : "items")"
+        guard reminderCount > 0 else { return itemText }
+        return "\(itemText) · \(reminderCount) \(reminderCount == 1 ? "reminder" : "reminders")"
+    }
+}
 
 struct Config: Equatable {
     //    var count: Int = 10  // 3 days past + today + 7 days future
@@ -21,6 +40,10 @@ struct Config: Equatable {
 struct WheelPicker: View {
     @EnvironmentObject var vm: BoringViewModel
     @Binding var selectedDate: Date
+    /// The rail contains the complete displayed month, so its first and last
+    /// dates always match the month title rather than an arbitrary rolling
+    /// window around today.
+    let displayedMonth: Date
     @State private var scrollPosition: Int?
     @State private var haptics: Bool = false
     @State private var byClick: Bool = false
@@ -70,7 +93,7 @@ struct WheelPicker: View {
             }
         }
         .onAppear {
-            scrollToToday(config: config)
+            scrollToSelection()
         }
         // When parent updates the bound selectedDate (e.g., view reopen), center the wheel on it
         .onChange(of: selectedDate) { _, newValue in
@@ -138,37 +161,37 @@ struct WheelPicker: View {
         }
     }
 
-    private func scrollToToday(config: Config) {
-        let today = Date()
+    private func scrollToSelection() {
         byClick = true
-        scrollPosition = indexForDate(today)
-        selectedDate = today
+        scrollPosition = indexForDate(selectedDate)
     }
 
     // MARK: - Index/Date mapping with steps and spacers
     private func indexForDate(_ date: Date) -> Int {
         let spacerNum = config.offset
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let startDate = cal.startOfDay(for: cal.date(byAdding: .day, value: -config.past, to: today) ?? today)
+        let startDate = startOfDisplayedMonth(using: cal)
         let target = cal.startOfDay(for: date)
         let days = cal.dateComponents([.day], from: startDate, to: target).day ?? 0
-        let stepIndex = max(0, min(days / max(config.steps, 1), totalDateItems() - 1))
+        let stepIndex = max(0, min(days, totalDateItems() - 1))
         return spacerNum + stepIndex
     }
 
     private func dateForItemIndex(index: Int, spacerNum: Int) -> Date {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let startDate = cal.date(byAdding: .day, value: -config.past, to: today) ?? today
+        let startDate = startOfDisplayedMonth(using: cal)
         let stepIndex = index - spacerNum
-        return cal.date(byAdding: .day, value: stepIndex * max(config.steps, 1), to: startDate) ?? today
+        return cal.date(byAdding: .day, value: stepIndex, to: startDate) ?? startDate
     }
 
     private func totalDateItems() -> Int {
-        let range = config.past + config.future
-        let step = max(config.steps, 1)
-        return Int(ceil(Double(range) / Double(step))) + 1
+        let calendar = Calendar.current
+        return calendar.range(of: .day, in: .month, for: displayedMonth)?.count ?? 31
+    }
+
+    private func startOfDisplayedMonth(using calendar: Calendar) -> Date {
+        calendar.dateInterval(of: .month, for: displayedMonth)?.start
+            ?? calendar.startOfDay(for: displayedMonth)
     }
 
     private func dateToString(for date: Date) -> String {
@@ -182,65 +205,184 @@ struct CalendarView: View {
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject private var calendarManager = CalendarManager.shared
     @State private var selectedDate = Date()
+    @State private var displayedMonth = Date()
+    @State private var panelHeightTask: Task<Void, Never>?
+    @Default(.hideCompletedReminders) private var hideCompletedReminders
+
+    private var selectedDayEvents: [EventModel] {
+        EventListView.filteredEvents(events: calendarManager.events).filter {
+            Calendar.autoupdatingCurrent.isDate($0.start, inSameDayAs: selectedDate)
+        }
+    }
+
+    private func updatePanelHeight() {
+        vm.requestOpenHeight(
+            IslandExpandedPageSizing.calendarHeight(itemCount: selectedDayEvents.count),
+            for: .calendar
+        )
+    }
+
+    /// The date rail can publish several intermediate days during a fast
+    /// horizontal scrub. Coalesce only the outer-panel resize; the selected
+    /// day's content still updates immediately. This avoids interrupting an
+    /// in-flight top-anchored AppKit resize with another target height.
+    private func schedulePanelHeightUpdate() {
+        panelHeightTask?.cancel()
+        let requestedDate = selectedDate
+        panelHeightTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled,
+                  Calendar.autoupdatingCurrent.isDate(requestedDate, inSameDayAs: selectedDate)
+            else { return }
+            updatePanelHeight()
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading) {
-                    Text(selectedDate.formatted(.dateTime.month(.abbreviated)))
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color.islandPrimaryText)
-                    Text(selectedDate.formatted(.dateTime.year()))
-                        .font(.title3)
-                        .fontWeight(.light)
-                        .foregroundColor(Color.islandSecondaryText)
-                }
-
-                ZStack(alignment: .top) {
-                    WheelPicker(selectedDate: $selectedDate, config: Config())
-                    HStack(alignment: .top) {
-                        LinearGradient(
-                            colors: [Color.islandHardwareSurface, .clear], startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: 20)
-                        Spacer()
-                        LinearGradient(
-                            colors: [.clear, Color.islandHardwareSurface], startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: 20)
+            HStack(alignment: .center, spacing: 8) {
+                HStack(spacing: 2) {
+                    Button {
+                        moveSelectedDate(byMonths: -1)
+                    } label: {
+                        Image(systemName: "chevron.left")
                     }
-                }
-            }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Previous month")
+                    .accessibilityLabel("Previous month")
 
-            let filteredEvents = EventListView.filteredEvents(
-                events: calendarManager.events
-            )
-            if filteredEvents.isEmpty {
+                    VStack(alignment: .leading) {
+                        Text(displayedMonth.formatted(.dateTime.month(.abbreviated)))
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Color.islandPrimaryText)
+                        Text(displayedMonth.formatted(.dateTime.year()))
+                            .font(.title3)
+                            .fontWeight(.light)
+                            .foregroundColor(Color.islandSecondaryText)
+                    }
+
+                    Button {
+                        moveSelectedDate(byMonths: 1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Next month")
+                    .accessibilityLabel("Next month")
+                }
+
+                WheelPicker(
+                    selectedDate: $selectedDate,
+                    displayedMonth: displayedMonth,
+                    config: Config()
+                )
+                    .overlay {
+                        HStack(alignment: .top) {
+                            LinearGradient(
+                                colors: [Color.islandHardwareSurface, .clear], startPoint: .leading, endPoint: .trailing
+                            )
+                            .frame(width: 20)
+                            Spacer()
+                            LinearGradient(
+                                colors: [.clear, Color.islandHardwareSurface], startPoint: .leading, endPoint: .trailing
+                            )
+                            .frame(width: 20)
+                        }
+                        .allowsHitTesting(false)
+                    }
+
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app"))
+                } label: {
+                    Label("Apple Calendar", systemImage: "calendar")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open Apple Calendar")
+                .accessibilityLabel("Open Apple Calendar")
+
+                Menu {
+                    Toggle(
+                        "Show completed reminders",
+                        isOn: Binding(
+                            get: { !hideCompletedReminders },
+                            set: { hideCompletedReminders = !$0 }
+                        )
+                    )
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .controlSize(.small)
+                .help("Calendar display options")
+                .accessibilityLabel("Calendar display options")
+            }
+            .padding(.bottom, 4)
+
+            if selectedDayEvents.isEmpty {
                 EmptyEventsView(selectedDate: selectedDate)
                 Spacer(minLength: 0)
             } else {
-                EventListView(events: calendarManager.events)
+                EventListView(events: selectedDayEvents)
             }
         }
         .listRowBackground(Color.clear)
-        .frame(height: 120)
+        .frame(maxHeight: .infinity, alignment: .top)
         .onChange(of: selectedDate) {
+            if !Calendar.autoupdatingCurrent.isDate(selectedDate, equalTo: displayedMonth, toGranularity: .month) {
+                displayedMonth = selectedDate
+            }
+            schedulePanelHeightUpdate()
             Task {
                 await calendarManager.updateCurrentDate(selectedDate)
             }
+        }
+        .onChange(of: calendarManager.events) { _, _ in
+            schedulePanelHeightUpdate()
         }
         .onChange(of: vm.notchState) { _, _ in
             Task {
                 await calendarManager.updateCurrentDate(Date.now)
                 selectedDate = Date.now
+                displayedMonth = Date.now
             }
         }
         .onAppear {
+            selectedDate = calendarManager.events.first { $0.end > Date.now }?.start ?? Date.now
+            displayedMonth = selectedDate
+            updatePanelHeight()
             Task {
-                await calendarManager.updateCurrentDate(Date.now)
-                selectedDate = Date.now
+                await calendarManager.updateCurrentDate(selectedDate)
             }
+        }
+        .onDisappear {
+            panelHeightTask?.cancel()
+            panelHeightTask = nil
+        }
+    }
+
+    private func moveSelectedDate(byMonths offset: Int) {
+        let calendar = Calendar.autoupdatingCurrent
+        guard let targetMonth = calendar.date(
+            byAdding: .month,
+            value: offset,
+            to: displayedMonth
+        ) else {
+            return
+        }
+
+        let day = calendar.component(.day, from: selectedDate)
+        let maximumDay = calendar.range(of: .day, in: .month, for: targetMonth)?.count ?? day
+        var components = calendar.dateComponents([.year, .month], from: targetMonth)
+        components.day = min(day, maximumDay)
+        guard let newDate = calendar.date(from: components) else { return }
+
+        withAnimation(IslandMotion.interaction) {
+            selectedDate = newDate
+            displayedMonth = targetMonth
         }
     }
 }
@@ -248,12 +390,39 @@ struct CalendarView: View {
 /// Home uses a summary, not the full scheduler. This keeps the island useful
 /// at a glance and reserves the detailed, scrollable schedule for CalendarView.
 struct HomeCalendarCard: View {
-    @Environment(\.openURL) private var openURL
+    /// Home owns one shared row height. Supplying it here prevents the
+    /// Calendar surface from drawing beyond its fixed HStack slot.
+    let moduleHeight: CGFloat?
     @ObservedObject private var calendarManager = CalendarManager.shared
+    @ObservedObject private var coordinator = BoringViewCoordinator.shared
+    @EnvironmentObject private var vm: BoringViewModel
 
-    private var nextItem: EventModel? {
-        EventListView.filteredEvents(events: calendarManager.events)
-            .first { $0.end > Date.now }
+    private var todayItems: [EventModel] {
+        EventListView.filteredEvents(events: calendarManager.events).filter {
+            Calendar.autoupdatingCurrent.isDate($0.start, inSameDayAs: .now)
+        }
+    }
+
+    private var primaryItem: EventModel? {
+        let timedItems = todayItems.filter { !$0.isAllDay }
+        return timedItems.first { $0.start <= .now && $0.end > .now }
+            ?? timedItems.first { $0.start > .now }
+            ?? todayItems.first
+    }
+
+    private var reminderCount: Int {
+        todayItems.filter(\.type.isReminder).count
+    }
+
+    private var hasScheduleAccess: Bool {
+        CalendarAccessPolicy.hasReadAccess(calendarManager.calendarAuthorizationStatus)
+            || CalendarAccessPolicy.hasReadAccess(calendarManager.reminderAuthorizationStatus)
+    }
+
+    private var statusMessage: String? {
+        hasScheduleAccess
+            ? nil
+            : CalendarAccessPolicy.homeStatusMessage(for: calendarManager.calendarAuthorizationStatus)
     }
 
     private var weekday: String {
@@ -262,24 +431,34 @@ struct HomeCalendarCard: View {
 
     var body: some View {
         Group {
-            if calendarManager.calendarAuthorizationStatus == .fullAccess {
+            if hasScheduleAccess {
                 Button {
-                    if let url = nextItem?.calendarAppURL() {
-                        openURL(url)
-                    } else {
-                        NSWorkspace.shared.open(URL(string: "calshow://")!)
-                    }
+                    vm.selectOpenPage(.calendar)
                 } label: {
                     content
                 }
                 .buttonStyle(.plain)
-                .help(nextItem == nil ? "Open Calendar" : "Open \(nextItem!.title) in Calendar")
+                .help("View schedule in MacIsland")
+                .accessibilityLabel(
+                    primaryItem == nil
+                        ? "View schedule in MacIsland"
+                        : "View today's \(HomeCalendarSummaryPresentation.countLabel(itemCount: todayItems.count, reminderCount: reminderCount)) in MacIsland, starting with \(primaryItem!.title)"
+                )
             } else {
                 content
             }
         }
-        .padding(IslandStyle.modulePadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The Home row is height-bounded by `HomeLayoutBudget`. Keep the
+        // summary's minimum height inside that shared module height so its
+        // surface aligns with the media card instead of growing upward.
+        .padding(.horizontal, IslandStyle.modulePadding)
+        .padding(.vertical, 6)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: moduleHeight,
+            maxHeight: moduleHeight,
+            alignment: .topLeading
+        )
         .background(Color.islandModuleSurface, in: RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: IslandStyle.moduleCornerRadius, style: .continuous)
@@ -297,41 +476,58 @@ struct HomeCalendarCard: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(weekday)
                     .font(IslandTypography.metadata.weight(.semibold))
                         .foregroundStyle(Color.islandSecondaryText)
-                    Text(Date.now.formatted(.dateTime.day()))
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(Date.now.formatted(.dateTime.month(.abbreviated)).uppercased())
+                            .font(IslandTypography.metadata.weight(.semibold))
+                            .foregroundStyle(Color.islandSecondaryText)
+                        Text(Date.now.formatted(.dateTime.day()))
+                            .font(.system(size: 23, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.islandPrimaryText)
+                    }
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "calendar")
-                    .font(IslandTypography.body.weight(.medium))
-                    .foregroundStyle(Color.effectiveAccent)
+                HStack(spacing: 5) {
+                    HomeCalendarCountBadge(
+                        count: todayItems.count,
+                        symbol: "calendar"
+                    )
+                    if reminderCount > 0 {
+                        HomeCalendarCountBadge(
+                            count: reminderCount,
+                            symbol: "checklist"
+                        )
+                    }
+                }
             }
 
             Divider().overlay(Color.islandBorder)
 
-            if calendarManager.calendarAuthorizationStatus != .fullAccess {
-                Label("Enable Calendar in Settings", systemImage: "calendar.badge.exclamationmark")
+            if let statusMessage {
+                Label(statusMessage, systemImage: "calendar.badge.exclamationmark")
                     .font(IslandTypography.metadata)
                     .foregroundStyle(Color.islandSecondaryText)
                     .lineLimit(2)
-            } else if let nextItem {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(nextItem.title)
+            } else if let primaryItem {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(primaryItem.title)
                         .font(IslandTypography.body.weight(.semibold))
                         .foregroundStyle(Color.islandPrimaryText)
-                        .lineLimit(2)
-                    Text(nextItem.isAllDay ? "All-day" : nextItem.start.formatted(date: .omitted, time: .shortened))
-                        .font(IslandTypography.metadata)
-                        .foregroundStyle(Color.islandSecondaryText)
+                        .lineLimit(1)
+                    if !primaryItem.isAllDay {
+                        Text(primaryItem.start.formatted(date: .omitted, time: .shortened))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(Color.islandSecondaryText)
+                    }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Nothing else today")
                         .font(IslandTypography.body.weight(.semibold))
                     Text("Enjoy clear time.")
@@ -341,6 +537,26 @@ struct HomeCalendarCard: View {
             }
             Spacer(minLength: 0)
         }
+    }
+}
+
+private struct HomeCalendarCountBadge: View {
+    let count: Int
+    let symbol: String
+
+    var body: some View {
+        Label("\(count)", systemImage: symbol)
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.effectiveAccent)
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 5)
+            .frame(height: 20)
+            .background(Color.islandElevatedSurface, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.islandModuleBorder, lineWidth: IslandStyle.hairlineWidth)
+            }
+            .accessibilityLabel(symbol == "calendar" ? "\(count) scheduled items" : "\(count) reminders")
     }
 }
 
@@ -390,15 +606,10 @@ struct EventListView: View {
     }
 
     private func scrollToRelevantEvent(proxy: ScrollViewProxy) {
-        let now = Date()
-        // Determine a single target using preferred search order:
-        // 1) first non-all-day upcoming/in-progress event
-        // 2) first all-day event
-        // 3) last event (fallback)
-        let nonAllDayUpcoming = filteredEvents.first(where: { !$0.isAllDay && $0.end > now })
-        let firstAllDay = filteredEvents.first(where: { $0.isAllDay })
-        let lastEvent = filteredEvents.last
-        guard let target = nonAllDayUpcoming ?? firstAllDay ?? lastEvent else { return }
+        // This list represents one selected day. Start at its first item so
+        // all-day content is never skipped when a day change reuses a prior
+        // scroll position.
+        guard let target = filteredEvents.first else { return }
 
         Task { @MainActor in
             withTransaction(Transaction(animation: nil)) {
@@ -409,27 +620,32 @@ struct EventListView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            List {
-                ForEach(filteredEvents) { event in
-                    Button(action: {
-                        if let url = event.calendarAppURL() {
-                            openURL(url)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(filteredEvents) { event in
+                        Group {
+                            if event.type.isReminder {
+                                eventRow(event)
+                            } else {
+                                Button(action: {
+                                    if let url = event.calendarAppURL() {
+                                        openURL(url)
+                                    }
+                                }) {
+                                    eventRow(event)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
                         }
-                    }) {
-                        eventRow(event)
+                        .id(event.id)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+
+                        Divider().overlay(Color.islandBorder)
                     }
-                    .id(event.id)
-                    .padding(.leading, -5)
-                    .buttonStyle(PlainButtonStyle())
-                    .listRowSeparator(.automatic)
-                    .listRowSeparatorTint(Color.islandBorder)
-                    .listRowBackground(Color.clear)
                 }
             }
-            .listStyle(.plain)
-            .scrollIndicators(.never)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .scrollIndicators(.automatic)
             .onAppear {
                 scrollToRelevantEvent(proxy: proxy)
             }
@@ -437,7 +653,7 @@ struct EventListView: View {
                 scrollToRelevantEvent(proxy: proxy)
             }
         }
-        Spacer(minLength: 0)
+        .frame(maxHeight: .infinity)
     }
 
     private func eventRow(_ event: EventModel) -> some View {
@@ -461,7 +677,8 @@ struct EventListView: View {
                                 }
                             }
                         ),
-                        color: Color(event.calendar.color)
+                        color: Color(event.calendar.color),
+                        title: event.title
                     )
                     .opacity(1.0)  // Ensure the toggle is always fully opaque
                     HStack {
@@ -469,6 +686,7 @@ struct EventListView: View {
                             .font(.callout)
                             .foregroundColor(Color.islandPrimaryText)
                             .lineLimit(showFullEventTitles ? nil : 1)
+                            .accessibilityLabel(CalendarReminderPresentation.rowLabel(title: event.title))
                         Spacer(minLength: 0)
                         VStack(alignment: .trailing, spacing: 4) {
                             if event.isAllDay {
@@ -544,6 +762,7 @@ struct EventListView: View {
 struct ReminderToggle: View {
     @Binding var isOn: Bool
     var color: Color
+    var title: String
 
     var body: some View {
         Button(action: {
@@ -567,7 +786,7 @@ struct ReminderToggle: View {
         }
         .buttonStyle(PlainButtonStyle())
         .padding(0)
-        .accessibilityLabel(isOn ? "Mark as incomplete" : "Mark as complete")
+        .accessibilityLabel(CalendarReminderPresentation.toggleLabel(title: title, completed: isOn))
     }
 }
 

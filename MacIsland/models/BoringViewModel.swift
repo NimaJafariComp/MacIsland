@@ -5,6 +5,7 @@
 //  Created by Harsh Vardhan  Goswami  on 04/08/24.
 //
 
+import AppKit
 import AVFoundation
 import Combine
 import Defaults
@@ -53,10 +54,21 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published private(set) var hoverHitSize: CGSize = getClosedNotchSize()
     @Published var openIslandSize: CGSize = preferredOpenIslandSize
     @Published var panelSize: CGSize = CGSize(width: preferredOpenIslandSize.width, height: preferredOpenIslandSize.height + shadowPadding)
+    @Published private var requestedOpenHeights: [NotchViews: CGFloat] = [:]
     
     let webcamManager = WebcamManager.shared
     @Published var isCameraExpanded: Bool = false
+    @Published var isMirrorRingLightActive: Bool = false
+    @Published var mirrorRingLightBrightness: Double = 0.96
+    @Published var isMirrorSettingsPresented: Bool = false
     @Published var isRequestingAuthorization: Bool = false
+
+    /// A live preview or lit mirror is an intentional, privacy-sensitive
+    /// session. Hover dismissal must not hide it behind the user's back.
+    var isMirrorSessionPinned: Bool {
+        coordinator.currentView == .mirror
+            && (isCameraExpanded || isMirrorRingLightActive || isMirrorSettingsPresented)
+    }
     
     deinit {
         destroy()
@@ -216,10 +228,13 @@ class BoringViewModel: NSObject, ObservableObject {
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "open")
         updateMetrics()
-        withAnimation(IslandMotion.state) {
-            notchSize = openIslandSize
-            notchState = .open
-        }
+        updatePanelSize(for: coordinator.currentView)
+        // AppKit owns the panel-frame animation. Updating the SwiftUI model in
+        // a second animation transaction makes the surface and its host panel
+        // race each other during a resize.
+        notchSize = activeOpenIslandSize(for: coordinator.currentView)
+        notchState = .open
+        NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
         DispatchQueue.main.async {
             os_signpost(.end, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID)
         }
@@ -234,12 +249,15 @@ class BoringViewModel: NSObject, ObservableObject {
             return
         }
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
+        let wasOpen = notchState == .open
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "close")
         updateMetrics()
-        withAnimation(IslandMotion.state) {
-            notchSize = closedNotchSize
-            closedNotchSize = notchSize
-            notchState = .closed
+        notchSize = closedNotchSize
+        closedNotchSize = notchSize
+        notchState = .closed
+        updatePanelSize(for: coordinator.currentView)
+        if wasOpen {
+            NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
         }
         self.isBatteryPopoverActive = false
         self.coordinator.sneakPeek.show = false
@@ -248,6 +266,8 @@ class BoringViewModel: NSObject, ObservableObject {
             webcamManager.stopSession()
             isCameraExpanded = false
         }
+        isMirrorRingLightActive = false
+        isMirrorSettingsPresented = false
 
         // Set the current view to shelf if it contains files and the user enables openShelfByDefault
         // Otherwise, if the user has not enabled openLastShelfByDefault, set the view to home
@@ -277,6 +297,8 @@ class BoringViewModel: NSObject, ObservableObject {
             webcamManager.stopSession()
             isCameraExpanded = false
         }
+        isMirrorRingLightActive = false
+        isMirrorSettingsPresented = false
     }
 
     func updateMetrics() {
@@ -286,6 +308,112 @@ class BoringViewModel: NSObject, ObservableObject {
         hoverHitSize = metrics.hoverHitSize
         openIslandSize = metrics.openIslandSize
         panelSize = metrics.panelSize
+    }
+
+    var currentOpenIslandSize: CGSize {
+        activeOpenIslandSize(for: coordinator.currentView)
+    }
+
+    func updatePanelSize(for view: NotchViews) {
+        let activeSize = notchState == .open ? activeOpenIslandSize(for: view) : openIslandSize
+        panelSize = CGSize(width: activeSize.width, height: activeSize.height + shadowPadding)
+        if notchState == .open {
+            notchSize = activeSize
+        }
+    }
+
+    func requestOpenHeight(_ height: CGFloat, for view: NotchViews) {
+        let boundedHeight: CGFloat
+        switch view {
+        case .calendar:
+            boundedHeight = min(max(height, IslandExpandedPageSizing.calendarMinimumHeight), IslandExpandedPageSizing.calendarMaximumHeight)
+        case .clipboard:
+            boundedHeight = min(max(height, IslandExpandedPageSizing.compactHeight), IslandExpandedPageSizing.snippetsMaximumHeight)
+        case .notes:
+            boundedHeight = min(max(height, IslandExpandedPageSizing.notesMinimumHeight), IslandExpandedPageSizing.notesMaximumHeight)
+        case .mirror:
+            boundedHeight = min(max(height, IslandExpandedPageSizing.mirrorMinimumHeight), IslandExpandedPageSizing.mirrorMaximumHeight)
+        default:
+            return
+        }
+
+        let previousHeight = requestedOpenHeights[view] ?? defaultOpenHeight(for: view)
+        guard abs(previousHeight - boundedHeight) > 0.5 else { return }
+        requestedOpenHeights[view] = boundedHeight
+        guard notchState == .open, coordinator.currentView == view else { return }
+
+        notchSize = activeOpenIslandSize(for: view)
+        panelSize = CGSize(width: notchSize.width, height: notchSize.height + shadowPadding)
+        NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+    }
+
+    /// Populate a content-sized page's target before changing the visible
+    /// page. Otherwise SwiftUI first renders its compact fallback and then
+    /// reports its measured height, which creates a second panel transition.
+    func selectOpenPage(_ view: NotchViews) {
+        if view == .clipboard {
+            requestedOpenHeights[.clipboard] = IslandExpandedPageSizing.snippetsHeight(
+                entryCount: coordinator.clipboardEntries.count
+            )
+        } else if view == .mirror {
+            requestedOpenHeights[.mirror] = IslandExpandedPageSizing.mirrorPreferredHeight
+        } else if view == .notes {
+            requestedOpenHeights[.notes] = IslandExpandedPageSizing.notesMinimumHeight
+        }
+
+        coordinator.currentView = view
+        guard notchState == .open else { return }
+
+        let size = activeOpenIslandSize(for: view)
+        notchSize = size
+        panelSize = CGSize(width: size.width, height: size.height + shadowPadding)
+        NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+    }
+
+    private func activeOpenIslandSize(for view: NotchViews) -> CGSize {
+        guard view == .calendar || view == .clipboard || view == .mirror || view == .notes else { return openIslandSize }
+        let visibleHeight = NSScreen.screen(withUUID: screenUUID ?? "")?.visibleFrame.height
+            ?? NSScreen.main?.visibleFrame.height
+            ?? IslandExpandedPageSizing.calendarMaximumHeight
+        let requestedHeight = requestedOpenHeights[view] ?? defaultOpenHeight(for: view)
+        let maximumHeight: CGFloat
+        switch view {
+        case .calendar:
+            // A long schedule remains scrollable, but the island never consumes
+            // more than a little beyond half the active display.
+            maximumHeight = min(
+                IslandExpandedPageSizing.calendarMaximumHeight,
+                max(IslandExpandedPageSizing.calendarMinimumHeight, visibleHeight * 0.65)
+            )
+        case .clipboard:
+            maximumHeight = IslandExpandedPageSizing.snippetsMaximumHeight
+        case .notes:
+            maximumHeight = IslandExpandedPageSizing.notesMaximumHeight
+        case .mirror:
+            maximumHeight = min(
+                IslandExpandedPageSizing.mirrorMaximumHeight,
+                max(IslandExpandedPageSizing.mirrorMinimumHeight, visibleHeight * 0.65)
+            )
+        default:
+            maximumHeight = openIslandSize.height
+        }
+        return CGSize(
+            width: openIslandSize.width,
+            height: min(requestedHeight, maximumHeight)
+        )
+    }
+
+    private func defaultOpenHeight(for view: NotchViews) -> CGFloat {
+        switch view {
+        case .calendar:
+            IslandExpandedPageSizing.calendarMinimumHeight
+        case .mirror:
+            IslandExpandedPageSizing.mirrorPreferredHeight
+        case .notes:
+            IslandExpandedPageSizing.notesMinimumHeight
+        default:
+            IslandExpandedPageSizing.compactHeight
+        }
     }
 
     func closeHello() {
