@@ -522,7 +522,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func createBoringNotchWindow(for screen: NSScreen, with viewModel: BoringViewModel) -> NSWindow {
         viewModel.updateMetrics()
         let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
-        let rect = NSRect(origin: .zero, size: geometry.panelSize)
+        // Give AppKit the final top-centre frame from the outset. Previously
+        // this panel was born at (0, 0) and relied on a later lifecycle pass
+        // to move it to the notch. If that pass raced display restoration, a
+        // live MacIsland process could remain invisible at the bottom-left.
+        let rect = geometry.frame
         // The Island is visually borderless, but it is also a real interactive
         // surface. Utility/HUD panel styles can reject text-system activation
         // even when canBecomeKey is overridden.
@@ -550,11 +554,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             auditWindow.collectionBehavior = [
                 .fullScreenAuxiliary,
                 .stationary,
-                .canJoinAllSpaces,
+                // A floating Island may join every Space, but it must also be
+                // attached to the Space the person is currently using. A
+                // production panel cannot safely combine this with
+                // `canJoinAllSpaces`: on macOS it can remain in an inactive
+                // Space, leaving a live but invisible Island.
+                .moveToActiveSpace,
             ]
+            // MacIsland is an accessory surface, not a transient inspector.
+            // It must remain visible while another app owns keyboard focus.
+            auditWindow.hidesOnDeactivate = false
             if UIAuditMode.isEnabled {
-                auditWindow.collectionBehavior.insert(.moveToActiveSpace)
-                auditWindow.hidesOnDeactivate = false
+                // Audit needs the inspectable surface to follow Computer Use
+                // across Spaces. Keep this test-only behavior out of normal
+                // production presentation.
+                auditWindow.collectionBehavior.insert(.canJoinAllSpaces)
             }
             auditWindow.hasShadow = false
             auditWindow.isReleasedWhenClosed = false
