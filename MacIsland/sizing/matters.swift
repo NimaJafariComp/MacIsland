@@ -41,10 +41,10 @@ enum IslandMotion {
         if reduceMotion { return 0.01 }
 
         return switch phase {
-        case .state: 0.28
-        case .interaction: 0.16
-        case .content: 0.20
-        case .onboarding: 0.65
+        case .state: 0.22
+        case .interaction: 0.12
+        case .content: 0.14
+        case .onboarding: 0.42
         }
     }
 
@@ -55,26 +55,35 @@ enum IslandMotion {
     }
 
     /// The closed bridge and expanded island are one physical surface. A
-    /// low-bounce spring gives hover open/close the continuous, liquid
-    /// response of one physical surface without escaping into the menu bar.
+    /// single, coordinated timing curve lets the SwiftUI surface and its
+    /// AppKit host frame extend and contract as one continuous bubble.
+    static let islandOpenCloseDuration: TimeInterval = 0.38
+
     static var islandOpenClose: Animation {
         reduceMotion
             ? .linear(duration: durationBudget(for: .state, reduceMotion: true))
-            : .spring(duration: 0.46, bounce: 0.08)
+            : .spring(response: islandOpenCloseDuration, dampingFraction: 0.90, blendDuration: 0.08)
     }
 
     /// The transparent AppKit host must not shrink until the visible SwiftUI
     /// surface has completed its collapse. Keeping this in the same motion
     /// contract prevents a frame resize from clipping the morph mid-flight.
     static var islandOpenCloseSettleDelay: TimeInterval {
-        reduceMotion ? 0.01 : 0.46
+        reduceMotion ? 0.01 : islandOpenCloseDuration
+    }
+
+    /// Dynamic Island content follows the shell rather than appearing at the
+    /// first geometry frame. This keeps compact media/notch content visually
+    /// connected to the expanding surface.
+    static var expandedPresentationDelay: TimeInterval {
+        reduceMotion ? 0 : 0.04
     }
 
     /// AppKit owns the transparent panel frame while SwiftUI owns the island
     /// surface inside it. Both must use the same timing budget or a dynamic
     /// page height change appears as two separate jumps.
     static var appKitStateDuration: TimeInterval {
-        appKitStateDuration(reduceMotion: reduceMotion)
+        reduceMotion ? durationBudget(for: .state, reduceMotion: true) : islandOpenCloseDuration
     }
 
     static var shouldAnimateAppKitStateChanges: Bool {
@@ -291,6 +300,10 @@ let shadowPadding: CGFloat = 20
 let preferredOpenIslandSize = CGSize(width: 580, height: 190)
 enum IslandExpandedPageSizing {
     static let compactHeight = preferredOpenIslandSize.height
+    /// Snippets has a header and a single compact empty row. Its floor is
+    /// intentionally shorter than the generic Home shell so an empty history
+    /// does not leave a visually heavy lower band.
+    static let snippetsMinimumHeight: CGFloat = 154
     /// Calendar needs a slightly taller floor than other expanded pages so an
     /// empty or light day still has breathing room beneath its date strip.
     static let calendarMinimumHeight: CGFloat = 220
@@ -323,7 +336,7 @@ enum IslandExpandedPageSizing {
         // The compact history no longer has a search field. Keep just the
         // title/section rhythm plus its measured row grid, rather than leaving
         // a search-field-sized blank strip beneath the final row.
-        return min(snippetsMaximumHeight, max(compactHeight, 98 + rows * 56))
+        return min(snippetsMaximumHeight, max(snippetsMinimumHeight, 98 + rows * 56))
     }
 
     static func calendarHeight(itemCount: Int) -> CGFloat {

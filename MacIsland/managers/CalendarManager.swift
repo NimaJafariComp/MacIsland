@@ -51,6 +51,11 @@ class CalendarManager: ObservableObject {
     @Published var calendarAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     @Published var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     private var selectedCalendars: [CalendarModel] = []
+    /// Full Calendar keeps only the currently visible month. This prevents a
+    /// fresh EventKit/reminder query for every wheel tick without retaining an
+    /// unbounded history of event data.
+    private var loadedEventRange: DateInterval?
+    private var eventReloadGeneration: UInt = 0
     /// Non-persistent fixtures used exclusively by UI audit mode.
     private var auditEvents: [EventModel]?
     private let calendarService = CalendarService()
@@ -105,6 +110,7 @@ class CalendarManager: ObservableObject {
     private func refreshAfterStoreChange() async {
         refreshAuthorizationStatuses()
         currentWeekStartDate = Self.startOfDay(.now)
+        loadedEventRange = nil
         await reloadCalendarAndReminderLists()
         await updateEvents()
     }
@@ -244,6 +250,7 @@ class CalendarManager: ObservableObject {
 
         Defaults[.calendarSelectionState] = selectionState
         updateSelectedCalendars()
+        loadedEventRange = nil
         await updateEvents()
     }
 
@@ -253,17 +260,42 @@ class CalendarManager: ObservableObject {
 
     func updateCurrentDate(_ date: Date) async {
         currentWeekStartDate = Calendar.current.startOfDay(for: date)
+        if let loadedEventRange, loadedEventRange.contains(currentWeekStartDate) {
+            return
+        }
         await updateEvents()
     }
 
+    /// Loads the selected calendar month once. Selecting another day in that
+    /// month then filters the already-published events in SwiftUI rather than
+    /// scheduling a new EventKit/reminder query for each scroll position.
+    func updateCalendarMonth(containing date: Date) async {
+        let calendar = Calendar.autoupdatingCurrent
+        guard let month = calendar.dateInterval(of: .month, for: date) else {
+            await updateCurrentDate(date)
+            return
+        }
+
+        currentWeekStartDate = calendar.startOfDay(for: date)
+        if let loadedEventRange,
+           loadedEventRange.start == month.start,
+           loadedEventRange.end == month.end {
+            return
+        }
+        await updateEvents(in: month)
+    }
+
     func useAuditEvents(_ events: [EventModel]) {
+        eventReloadGeneration &+= 1
         auditEvents = events.sorted { $0.start < $1.start }
         self.events = auditEvents ?? []
         calendarAuthorizationStatus = .fullAccess
         reminderAuthorizationStatus = .fullAccess
     }
 
-    private func updateEvents() async {
+    private func updateEvents(in requestedRange: DateInterval? = nil) async {
+        eventReloadGeneration &+= 1
+        let generation = eventReloadGeneration
         if let auditEvents {
             events = auditEvents
             return
@@ -276,21 +308,28 @@ class CalendarManager: ObservableObject {
             events = []
             return
         }
+        let range = requestedRange ?? DateInterval(
+            start: currentWeekStartDate,
+            end: Calendar.current.date(byAdding: .day, value: 1, to: currentWeekStartDate)!
+        )
         let calendarIDs = selectedCalendars.map { $0.id }
         let eventsResult = await calendarService.events(
-            from: currentWeekStartDate,
-            to: Calendar.current.date(byAdding: .day, value: 1, to: currentWeekStartDate)!,
+            from: range.start,
+            to: range.end,
             calendars: calendarIDs
         )
+        guard generation == eventReloadGeneration else { return }
         self.events = eventsResult
+        loadedEventRange = range
     }
     
     func setReminderCompleted(reminderID: String, completed: Bool) async {
         await calendarService.setReminderCompleted(reminderID: reminderID, completed: completed)
-        // Refresh events after updating
-        events = await calendarService.events(
-            from: currentWeekStartDate,
-            to: Calendar.current.date(byAdding: .day, value: 1, to: currentWeekStartDate)!,
-            calendars: selectedCalendars.map { $0.id })
+        // Preserve the visible full-month cache when a reminder changes.
+        let range = loadedEventRange ?? DateInterval(
+            start: currentWeekStartDate,
+            end: Calendar.current.date(byAdding: .day, value: 1, to: currentWeekStartDate)!
+        )
+        await updateEvents(in: range)
     }
 }

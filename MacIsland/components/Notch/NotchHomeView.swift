@@ -161,7 +161,11 @@ struct AlbumArtView: View {
         Image(nsImage: musicManager.albumArt)
             .resizable()
             .aspectRatio(1, contentMode: .fit)
-            .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
+            .matchedGeometryEffect(
+                id: "albumArt",
+                in: albumArtNamespace,
+                isSource: vm.compactContentOpacity <= 0.5
+            )
             .clipped()
             .clipShape(
                 RoundedRectangle(

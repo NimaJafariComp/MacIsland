@@ -21,6 +21,16 @@ enum CameraPreviewPolicy {
     }
 }
 
+/// Semantic open/closed intent and visual presentation are deliberately
+/// separate. The phase owns the single, interruptible material morph while
+/// `notchState` keeps its existing input, accessibility, and lifecycle role.
+enum IslandPresentationPhase: Equatable {
+    case compact
+    case expanding
+    case expanded
+    case collapsing
+}
+
 class BoringViewModel: NSObject, ObservableObject {
     private static let lifecycleLog = OSLog(subsystem: "com.macisland.app", category: "IslandLifecycle")
     @ObservedObject var coordinator = BoringViewCoordinator.shared
@@ -54,8 +64,23 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published private(set) var hoverHitSize: CGSize = getClosedNotchSize()
     @Published var openIslandSize: CGSize = preferredOpenIslandSize
     @Published var panelSize: CGSize = CGSize(width: preferredOpenIslandSize.width, height: preferredOpenIslandSize.height + shadowPadding)
+    /// The visible Island shell has its own continuous geometry progress. It
+    /// must not derive its dimensions from the discrete page/open state.
+    @Published private(set) var islandMorphProgress: CGFloat = 0
+    @Published private(set) var presentationPhase: IslandPresentationPhase = .compact
+    /// Compact and expanded content share one stable overlay. Opacity is a
+    /// presentation concern; neither value is allowed to change shell bounds.
+    @Published private(set) var compactContentOpacity: CGFloat = 1
+    @Published private(set) var expandedContentOpacity: CGFloat = 0
+    @Published private(set) var isExpandedContentMounted = false
+    /// The transparent closed hover target must not be inserted or removed in
+    /// the middle of a material morph, where it would shift the visible shell.
+    @Published private(set) var usesClosedHoverTarget = true
     @Published private var requestedOpenHeights: [NotchViews: CGFloat] = [:]
     private var deferredPanelCollapse: DispatchWorkItem?
+    private var deferredPresentationStage: DispatchWorkItem?
+    private var presentationGeneration: UInt = 0
+    private var panelGeometryGeneration: UInt = 0
     
     let webcamManager = WebcamManager.shared
     @Published var isCameraExpanded: Bool = false
@@ -77,6 +102,8 @@ class BoringViewModel: NSObject, ObservableObject {
 
     func destroy() {
         webcamManager.stopSession()
+        deferredPanelCollapse?.cancel()
+        deferredPresentationStage?.cancel()
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
     }
@@ -228,16 +255,55 @@ class BoringViewModel: NSObject, ObservableObject {
         guard !isScreenLocked else { return }
         deferredPanelCollapse?.cancel()
         deferredPanelCollapse = nil
+        guard presentationPhase != .expanding, presentationPhase != .expanded else { return }
+        let transitionID = beginPresentationTransition(toward: .expanding)
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "open")
+        let currentPanelSize = panelSize
         updateMetrics()
         let targetSize = activeOpenIslandSize(for: coordinator.currentView)
+        let targetPanelSize = persistentPanelEnvelope(
+            for: coordinator.currentView,
+            visibleSize: targetSize
+        )
+        panelSize = panelEnvelope(from: currentPanelSize, to: targetPanelSize)
+        usesClosedHoverTarget = false
+        // Mount the destination before the shell starts animating. It remains
+        // transparent until the short content stage, but matched media artwork
+        // can now resolve its destination geometry from the first frame.
+        isExpandedContentMounted = true
         withAnimation(IslandMotion.islandOpenClose) {
             notchSize = targetSize
-            panelSize = CGSize(width: targetSize.width, height: targetSize.height + shadowPadding)
+            islandMorphProgress = 1
             notchState = .open
         }
+        withAnimation(IslandMotion.content) {
+            compactContentOpacity = 1
+            expandedContentOpacity = 0
+        }
         NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+        settlePanelEnvelope(
+            at: targetPanelSize,
+            while: .open,
+            transitionID: transitionID,
+            expectedPhase: .expanding
+        ) { [weak self] in
+            guard let self,
+                  self.presentationGeneration == transitionID,
+                  self.presentationPhase == .expanding
+            else { return }
+            self.presentationPhase = .expanded
+        }
+        schedulePresentationStage(
+            after: IslandMotion.expandedPresentationDelay,
+            transitionID: transitionID,
+            expectedPhase: .expanding
+        ) { viewModel in
+            withAnimation(IslandMotion.content) {
+                viewModel.compactContentOpacity = 0
+                viewModel.expandedContentOpacity = 1
+            }
+        }
         DispatchQueue.main.async {
             os_signpost(.end, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID)
         }
@@ -253,32 +319,57 @@ class BoringViewModel: NSObject, ObservableObject {
         }
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         let wasOpen = notchState == .open
+        let closingView = coordinator.currentView
+        let viewAfterClose: NotchViews
+        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
+            viewAfterClose = .shelf
+        } else if coordinator.openLastTabByDefault {
+            viewAfterClose = closingView
+        } else {
+            viewAfterClose = .home
+        }
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "close")
-        // Preserve the host panel's current frame during the visible morph.
-        // `updateMetrics()` computes the later compact host size, but applying
-        // it immediately clips the SwiftUI surface and makes collapse jump.
-        let expandedPanelSize = panelSize
+        let currentPanelSize = panelSize
+        guard presentationPhase != .compact || notchState == .open else { return }
+        let transitionID = beginPresentationTransition(toward: .collapsing)
         updateMetrics()
         let collapsedPanelSize = panelSize
+        panelSize = panelEnvelope(from: currentPanelSize, to: collapsedPanelSize)
+        usesClosedHoverTarget = false
         withAnimation(IslandMotion.islandOpenClose) {
-            panelSize = expandedPanelSize
             notchSize = closedNotchSize
             closedNotchSize = notchSize
+            islandMorphProgress = 0
             notchState = .closed
+        }
+        // The compact media/activity destination is present from frame zero;
+        // the expanded layer retreats over it instead of being swapped out.
+        withAnimation(IslandMotion.content) {
+            compactContentOpacity = 1
+            expandedContentOpacity = 0
         }
         if wasOpen {
             NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
-            deferredPanelCollapse?.cancel()
-            let collapse = DispatchWorkItem { [weak self] in
-                guard let self, self.notchState == .closed else { return }
-                self.panelSize = collapsedPanelSize
-                NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+            settlePanelEnvelope(
+                at: collapsedPanelSize,
+                while: .closed,
+                transitionID: transitionID,
+                expectedPhase: .collapsing
+            ) { [weak self] in
+                guard let self,
+                      self.presentationGeneration == transitionID,
+                      self.presentationPhase == .collapsing
+                else { return }
+                self.presentationPhase = .compact
+                self.isExpandedContentMounted = false
+                self.usesClosedHoverTarget = true
+                // Do not replace the tab until the user can no longer see
+                // the close morph. Replacing it mid-animation looks like the
+                // island briefly reopens to Home.
+                if self.coordinator.currentView == closingView {
+                    self.coordinator.currentView = viewAfterClose
+                }
             }
-            deferredPanelCollapse = collapse
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + IslandMotion.islandOpenCloseSettleDelay,
-                execute: collapse
-            )
         }
         self.isBatteryPopoverActive = false
         self.coordinator.sneakPeek.show = false
@@ -290,13 +381,6 @@ class BoringViewModel: NSObject, ObservableObject {
         isMirrorRingLightActive = false
         isMirrorSettingsPresented = false
 
-        // Set the current view to shelf if it contains files and the user enables openShelfByDefault
-        // Otherwise, if the user has not enabled openLastShelfByDefault, set the view to home
-    if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
-            coordinator.currentView = .shelf
-        } else if !coordinator.openLastTabByDefault {
-            coordinator.currentView = .home
-        }
         DispatchQueue.main.async {
             os_signpost(.end, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID)
         }
@@ -308,10 +392,19 @@ class BoringViewModel: NSObject, ObservableObject {
         guard locked else { return }
 
         updateMetrics()
+        presentationGeneration &+= 1
+        deferredPresentationStage?.cancel()
+        deferredPresentationStage = nil
         withAnimation(IslandMotion.state) {
             notchSize = closedNotchSize
+            islandMorphProgress = 0
             notchState = .closed
         }
+        presentationPhase = .compact
+        compactContentOpacity = 1
+        expandedContentOpacity = 0
+        isExpandedContentMounted = false
+        usesClosedHoverTarget = true
         isBatteryPopoverActive = false
         edgeAutoOpenActive = false
         if isCameraExpanded {
@@ -343,13 +436,82 @@ class BoringViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// The borderless AppKit panel is only an interaction/hosting envelope.
+    /// Keep it large enough for both endpoints while SwiftUI draws the visible
+    /// morph, then settle its transparent bounds after the animation.
+    private func panelEnvelope(from current: CGSize, to target: CGSize) -> CGSize {
+        CGSize(
+            width: max(current.width, target.width),
+            height: max(current.height, target.height)
+        )
+    }
+
+    private func settlePanelEnvelope(
+        at target: CGSize,
+        while expectedState: NotchState,
+        transitionID: UInt? = nil,
+        expectedPhase: IslandPresentationPhase? = nil,
+        delay: TimeInterval = IslandMotion.islandOpenCloseSettleDelay,
+        completion: @escaping () -> Void = {}
+    ) {
+        deferredPanelCollapse?.cancel()
+        panelGeometryGeneration &+= 1
+        let panelGeneration = panelGeometryGeneration
+        let settlement = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.notchState == expectedState,
+                  self.panelGeometryGeneration == panelGeneration,
+                  transitionID.map({ self.presentationGeneration == $0 }) ?? true,
+                  expectedPhase.map({ self.presentationPhase == $0 }) ?? true
+            else { return }
+            self.panelSize = target
+            completion()
+            NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+        }
+        deferredPanelCollapse = settlement
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + delay,
+            execute: settlement
+        )
+    }
+
+    /// A monotonically increasing token makes stale delayed presentation work
+    /// harmless when a hover reverses direction mid-morph.
+    private func beginPresentationTransition(toward phase: IslandPresentationPhase) -> UInt {
+        presentationGeneration &+= 1
+        deferredPresentationStage?.cancel()
+        deferredPresentationStage = nil
+        presentationPhase = phase
+        return presentationGeneration
+    }
+
+    private func schedulePresentationStage(
+        after delay: TimeInterval,
+        transitionID: UInt,
+        expectedPhase: IslandPresentationPhase,
+        action: @escaping (BoringViewModel) -> Void
+    ) {
+        let stage = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.presentationGeneration == transitionID,
+                  self.presentationPhase == expectedPhase
+            else { return }
+            action(self)
+        }
+        deferredPresentationStage = stage
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: stage)
+    }
+
     func requestOpenHeight(_ height: CGFloat, for view: NotchViews) {
         let boundedHeight: CGFloat
         switch view {
         case .calendar:
             boundedHeight = min(max(height, IslandExpandedPageSizing.calendarMinimumHeight), IslandExpandedPageSizing.calendarMaximumHeight)
         case .clipboard:
-            boundedHeight = min(max(height, IslandExpandedPageSizing.compactHeight), IslandExpandedPageSizing.snippetsMaximumHeight)
+            boundedHeight = min(
+                max(height, IslandExpandedPageSizing.snippetsMinimumHeight),
+                IslandExpandedPageSizing.snippetsMaximumHeight
+            )
         case .notes:
             boundedHeight = min(max(height, IslandExpandedPageSizing.notesMinimumHeight), IslandExpandedPageSizing.notesMaximumHeight)
         case .mirror:
@@ -363,9 +525,14 @@ class BoringViewModel: NSObject, ObservableObject {
         requestedOpenHeights[view] = boundedHeight
         guard notchState == .open, coordinator.currentView == view else { return }
 
-        notchSize = activeOpenIslandSize(for: view)
-        panelSize = CGSize(width: notchSize.width, height: notchSize.height + shadowPadding)
+        let targetSize = activeOpenIslandSize(for: view)
+        let targetPanelSize = persistentPanelEnvelope(for: view, visibleSize: targetSize)
+        panelSize = panelEnvelope(from: panelSize, to: targetPanelSize)
+        withAnimation(IslandMotion.islandOpenClose) {
+            notchSize = targetSize
+        }
         NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+        settlePanelEnvelope(at: targetPanelSize, while: .open)
     }
 
     /// Populate a content-sized page's target before changing the visible
@@ -379,16 +546,47 @@ class BoringViewModel: NSObject, ObservableObject {
         } else if view == .mirror {
             requestedOpenHeights[.mirror] = IslandExpandedPageSizing.mirrorPreferredHeight
         } else if view == .notes {
-            requestedOpenHeights[.notes] = IslandExpandedPageSizing.notesMinimumHeight
+            // Notes refreshes in the background, so its cached rows are
+            // available before the tab becomes visible. Start at that exact
+            // capped height instead of opening short and growing a frame later.
+            requestedOpenHeights[.notes] = IslandExpandedPageSizing.notesHeight(
+                recentNoteCount: AppleNotesStore.shared.recentNotes.count
+            )
         }
 
-        coordinator.currentView = view
-        guard notchState == .open else { return }
+        guard notchState == .open else {
+            coordinator.currentView = view
+            return
+        }
 
         let size = activeOpenIslandSize(for: view)
-        notchSize = size
-        panelSize = CGSize(width: size.width, height: size.height + shadowPadding)
+        let targetPanelSize = persistentPanelEnvelope(for: view, visibleSize: size)
+        panelSize = panelEnvelope(from: panelSize, to: targetPanelSize)
+        withAnimation(IslandMotion.islandOpenClose) {
+            coordinator.currentView = view
+            notchSize = size
+        }
         NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+        settlePanelEnvelope(at: targetPanelSize, while: .open)
+    }
+
+    /// Calendar's black surface remains content-sized, but its transparent
+    /// AppKit host stays at the selected screen's capped Calendar height while
+    /// that page is open. This prevents a window-frame move for every day
+    /// whose item count differs from the previous one.
+    private func persistentPanelEnvelope(for view: NotchViews, visibleSize: CGSize) -> CGSize {
+        guard view == .calendar else {
+            return CGSize(width: visibleSize.width, height: visibleSize.height + shadowPadding)
+        }
+
+        let visibleHeight = NSScreen.screen(withUUID: screenUUID ?? "")?.visibleFrame.height
+            ?? NSScreen.main?.visibleFrame.height
+            ?? IslandExpandedPageSizing.calendarMaximumHeight
+        let calendarCap = min(
+            IslandExpandedPageSizing.calendarMaximumHeight,
+            max(IslandExpandedPageSizing.calendarMinimumHeight, visibleHeight * 0.65)
+        )
+        return CGSize(width: visibleSize.width, height: calendarCap + shadowPadding)
     }
 
     private func activeOpenIslandSize(for view: NotchViews) -> CGSize {
@@ -432,6 +630,8 @@ class BoringViewModel: NSObject, ObservableObject {
             IslandExpandedPageSizing.mirrorPreferredHeight
         case .notes:
             IslandExpandedPageSizing.notesMinimumHeight
+        case .clipboard:
+            IslandExpandedPageSizing.snippetsMinimumHeight
         default:
             IslandExpandedPageSizing.compactHeight
         }

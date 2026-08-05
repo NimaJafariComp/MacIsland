@@ -49,6 +49,12 @@ struct WheelPicker: View {
     @State private var byClick: Bool = false
     let config: Config
 
+    private static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "E"
+        return formatter
+    }()
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: config.spacing) {
@@ -195,9 +201,7 @@ struct WheelPicker: View {
     }
 
     private func dateToString(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "E"
-        return formatter.string(from: date)
+        Self.weekdayFormatter.string(from: date)
     }
 }
 
@@ -206,13 +210,16 @@ struct CalendarView: View {
     @ObservedObject private var calendarManager = CalendarManager.shared
     @State private var selectedDate = Date()
     @State private var displayedMonth = Date()
-    @State private var panelHeightTask: Task<Void, Never>?
     @Default(.hideCompletedReminders) private var hideCompletedReminders
 
-    private var selectedDayEvents: [EventModel] {
+    private func events(on date: Date) -> [EventModel] {
         EventListView.filteredEvents(events: calendarManager.events).filter {
-            Calendar.autoupdatingCurrent.isDate($0.start, inSameDayAs: selectedDate)
+            Calendar.autoupdatingCurrent.isDate($0.start, inSameDayAs: date)
         }
+    }
+
+    private var selectedDayEvents: [EventModel] {
+        events(on: selectedDate)
     }
 
     private func updatePanelHeight() {
@@ -222,23 +229,40 @@ struct CalendarView: View {
         )
     }
 
-    /// The date rail can publish several intermediate days during a fast
-    /// horizontal scrub. Coalesce only the outer-panel resize; the selected
-    /// day's content still updates immediately. This avoids interrupting an
-    /// in-flight top-anchored AppKit resize with another target height.
-    private func schedulePanelHeightUpdate() {
-        panelHeightTask?.cancel()
-        let requestedDate = selectedDate
-        panelHeightTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(120))
-            guard !Task.isCancelled,
-                  Calendar.autoupdatingCurrent.isDate(requestedDate, inSameDayAs: selectedDate)
-            else { return }
-            updatePanelHeight()
+    private var selectedDateBinding: Binding<Date> {
+        Binding(
+            get: { selectedDate },
+            set: { selectDate($0) }
+        )
+    }
+
+    /// A selected day and its capped panel height are one presentation state.
+    /// Sending the height only after a debounce makes populated days redraw
+    /// before their enclosing Island has started to grow.
+    private func selectDate(_ date: Date) {
+        guard !Calendar.autoupdatingCurrent.isDate(date, inSameDayAs: selectedDate) else { return }
+
+        vm.requestOpenHeight(
+            IslandExpandedPageSizing.calendarHeight(itemCount: events(on: date).count),
+            for: .calendar
+        )
+        withAnimation(IslandMotion.islandOpenClose) {
+            selectedDate = date
+            if !Calendar.autoupdatingCurrent.isDate(
+                date,
+                equalTo: displayedMonth,
+                toGranularity: .month
+            ) {
+                displayedMonth = date
+            }
+        }
+        Task {
+            await calendarManager.updateCalendarMonth(containing: date)
         }
     }
 
     var body: some View {
+        let selectedEvents = selectedDayEvents
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 2) {
@@ -275,7 +299,7 @@ struct CalendarView: View {
                 }
 
                 WheelPicker(
-                    selectedDate: $selectedDate,
+                    selectedDate: selectedDateBinding,
                     displayedMonth: displayedMonth,
                     config: Config()
                 )
@@ -322,45 +346,25 @@ struct CalendarView: View {
             }
             .padding(.bottom, 4)
 
-            if selectedDayEvents.isEmpty {
+            if selectedEvents.isEmpty {
                 EmptyEventsView(selectedDate: selectedDate)
                 Spacer(minLength: 0)
             } else {
-                EventListView(events: selectedDayEvents)
+                EventListView(events: selectedEvents)
             }
         }
         .listRowBackground(Color.clear)
         .frame(maxHeight: .infinity, alignment: .top)
-        .onChange(of: selectedDate) {
-            if !Calendar.autoupdatingCurrent.isDate(selectedDate, equalTo: displayedMonth, toGranularity: .month) {
-                displayedMonth = selectedDate
-            }
-            schedulePanelHeightUpdate()
-            Task {
-                await calendarManager.updateCurrentDate(selectedDate)
-            }
-        }
         .onChange(of: calendarManager.events) { _, _ in
-            schedulePanelHeightUpdate()
-        }
-        .onChange(of: vm.notchState) { _, _ in
-            Task {
-                await calendarManager.updateCurrentDate(Date.now)
-                selectedDate = Date.now
-                displayedMonth = Date.now
-            }
+            updatePanelHeight()
         }
         .onAppear {
-            selectedDate = calendarManager.events.first { $0.end > Date.now }?.start ?? Date.now
+            selectedDate = Date.now
             displayedMonth = selectedDate
             updatePanelHeight()
             Task {
-                await calendarManager.updateCurrentDate(selectedDate)
+                await calendarManager.updateCalendarMonth(containing: selectedDate)
             }
-        }
-        .onDisappear {
-            panelHeightTask?.cancel()
-            panelHeightTask = nil
         }
     }
 
@@ -380,10 +384,7 @@ struct CalendarView: View {
         components.day = min(day, maximumDay)
         guard let newDate = calendar.date(from: components) else { return }
 
-        withAnimation(IslandMotion.interaction) {
-            selectedDate = newDate
-            displayedMonth = targetMonth
-        }
+        selectDate(newDate)
     }
 }
 
@@ -433,6 +434,10 @@ struct HomeCalendarCard: View {
         Group {
             if hasScheduleAccess {
                 Button {
+                    vm.requestOpenHeight(
+                        IslandExpandedPageSizing.calendarHeight(itemCount: todayItems.count),
+                        for: .calendar
+                    )
                     vm.selectOpenPage(.calendar)
                 } label: {
                     content
@@ -601,15 +606,11 @@ struct EventListView: View {
         }
     }
 
-    private var filteredEvents: [EventModel] {
-        Self.filteredEvents(events: events)
-    }
-
     private func scrollToRelevantEvent(proxy: ScrollViewProxy) {
         // This list represents one selected day. Start at its first item so
         // all-day content is never skipped when a day change reuses a prior
         // scroll position.
-        guard let target = filteredEvents.first else { return }
+        guard let target = events.first else { return }
 
         Task { @MainActor in
             withTransaction(Transaction(animation: nil)) {
@@ -622,7 +623,7 @@ struct EventListView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(filteredEvents) { event in
+                    ForEach(events) { event in
                         Group {
                             if event.type.isReminder {
                                 eventRow(event)
@@ -649,7 +650,7 @@ struct EventListView: View {
             .onAppear {
                 scrollToRelevantEvent(proxy: proxy)
             }
-            .onChange(of: filteredEvents) { _, _ in
+            .onChange(of: events) { _, _ in
                 scrollToRelevantEvent(proxy: proxy)
             }
         }

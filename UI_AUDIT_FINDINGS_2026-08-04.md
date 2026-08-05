@@ -1401,3 +1401,346 @@ and
 `/var/folders/vf/g7fkng710zz_qnp372ttbshm0000gn/T/com.openai.sky.CUAService/1/MacIsland Screenshot 2026-08-05 at 2.44.37 AM.jpeg`.
 Computer Use screenshots are endpoint evidence only; final temporal feel must
 be confirmed by a person using the production build.
+
+### 2026-08-05 — implemented, awaiting visual confirmation: page-specific hover-dismiss jump
+
+Closing an expanded page previously reset `currentView` to Home while the
+outer Island was still springing closed. That could briefly render a different
+page during the bounce—most visibly for Quick Notes and the inactive Mirror.
+The expanded page now exits in the same transaction as the bubble collapse;
+only after the compact endpoint do the host-frame and default-tab updates run.
+A rapid reopen cancels that background cleanup.
+
+Computer Use opened the rebuilt Debug Quick Notes page and verified the live
+editor, action, and recent-note hierarchy. The updated Debug target compiles
+successfully. Computer Use cannot move the pointer outside the island window,
+so it cannot directly verify hover-off animation quality.
+
+### 2026-08-05 — implemented, awaiting human motion confirmation: unified Island morph
+
+The hover transition used independent geometry owners: the SwiftUI Island
+changed its shape while the AppKit panel-resize callback recalculated the
+window frame again using default page dimensions. Those competing transitions
+made large pages appear to snap down to the compact Island instead of
+contracting continuously.
+
+The view model is now the sole geometry source during interaction. Opening,
+closing, and content-sized page changes send the exact same target size to the
+SwiftUI shell and AppKit panel; both use a shared 0.46-second cubic timing
+curve. Expanded content exits at the start of close, while page/default-tab
+cleanup remains deferred until after the visual morph. This applies to Home,
+Mirror, Calendar, Shelf, Snippets, and Notes—not just Home.
+
+This follows Apple's Live Activities guidance: the Dynamic Island is a single
+black surface that extends and contracts, preserves existing layout where
+possible, and avoids replacing content mid-transition. Computer Use verified
+the rebuilt open media/Home endpoint. It cannot generate a pointer-leave hover
+event, so a human must confirm the temporal result on each page.
+
+### 2026-08-05 — geometry migration: page-by-page ownership review
+
+| Surface | Target-size policy | Migration result |
+| --- | --- | --- |
+| Home / Shelf | Shared fixed `580 × 190` shell | Uses the one model-owned target; no intrinsic page resize. |
+| Media | Same shared Home shell; compact art and expanded art share a matched-geometry identity | No page-size handoff; compact/expanded artwork remains one visual element. |
+| Calendar | Per-day rows; 220-point floor and active-display 65% ceiling | The selected day and its requested height now update together; the Home calendar action preloads today's target before opening. |
+| Snippets | Content rows; 154–440 points | Existing count-based target remains preloaded before the tab changes. |
+| Quick Notes | Cached recent rows; 260–420 points | The cached row count is now used before the Notes tab becomes visible. Background refresh can still make one controlled, capped update when new data arrives. |
+| Mirror | 360-point floor, preferred 540, active-display 65% ceiling | Preferred target remains preloaded before entering the page. |
+
+Every target above flows through `BoringViewModel` and then through the same
+SwiftUI/AppKit timing contract. No feature view now writes `notchSize` or
+`panelSize` directly. The remaining visual verification is temporal: Computer
+Use can capture endpoints but cannot trigger a real pointer leave.
+Screenshot evidence:
+`/var/folders/vf/g7fkng710zz_qnp372ttbshm0000gn/T/com.openai.sky.CUAService/MacIsland Screenshot 2026-08-05 at 2.54.38 AM.jpeg`.
+
+### 2026-08-05 — revised implementation, awaiting visual confirmation: transparent host envelope
+
+The synchronized AppKit-frame approach still let AppKit and SwiftUI interpolate
+the visible bounds independently, which could flash desktop space above the
+Island during page changes. The interaction path no longer animates the
+`NSPanel` frame. Instead, the panel expands immediately to an invisible
+envelope large enough for both endpoints; SwiftUI alone morphs the opaque
+Island; after the 0.46-second morph, the transparent envelope settles to the
+new size. This preserves existing Calendar/Snippets/Notes/Mirror caps and
+prevents an AppKit animation from interrupting any page's visible transition.
+
+Debug build passed. Computer Use cannot perform a pointer-leave or capture a
+motion sequence, so Home, Calendar day switches, Snippets, Notes, and inactive
+Mirror require direct human visual confirmation.
+
+### 2026-08-05 — revised implementation, awaiting visual confirmation: continuous shell geometry
+
+The transparent-host envelope removed the white-frame resize, but the visible
+shell still selected its width, height, padding, and corner values with an
+open/closed Boolean. That could remove the large opaque silhouette before a
+numeric frame animation was visible. The shell now owns a published `0...1`
+morph progress; its content rect, outer rect, padding, border, shadow, and
+corner radii all interpolate from that same value. Page content may still exit
+at close, but it can no longer replace the opaque shell.
+
+Debug build passed and is running. This requires direct hover-off verification;
+Computer Use has no pointer-leave action and cannot claim motion completion.
+
+### 2026-08-05 — revised implementation, awaiting visual confirmation: continuous compact media
+
+The first compact-content staging version removed an early cross-layout swap,
+but it also withheld the media artwork and playing indicator until the end of
+the close morph. Compact activity content is now mounted before contraction
+starts and remains mounted for the entire transition. This allows the existing
+shared album-art geometry to carry the media identity from the expanded player
+into the compact Island instead of presenting it late at the endpoint.
+
+Debug build passed and is running. Direct hover-off verification is required;
+Computer Use cannot generate a pointer-leave motion sequence.
+
+### 2026-08-05 — revised implementation, awaiting visual confirmation: staged open presentation
+
+Hover-open initially selected Home at frame zero, replacing compact
+media/original-notch content before the shell could visibly grow. Opening now
+keeps compact content for the first 120 ms of the shell morph, then crossfades
+Home/page content in. The shell also retains the exact compact source geometry
+(including media wings) for the full morph, preventing an endpoint change when
+the expanded content becomes visible.
+
+Debug build passed and is running. Direct human hover testing remains required
+for temporal verification.
+
+### 2026-08-05 — fixed: distributed-build onboarding trigger
+
+The setup window previously depended only on the persistent `firstLaunch`
+preference. Replacing an installed app with a DMG preserved that preference, so
+the new app build could start without showing its permission wizard. Completion
+is now recorded against `CFBundleShortVersionString` and `CFBundleVersion`.
+Every new distributed build reopens the complete setup flow; already-granted
+macOS permissions remain granted and their corresponding step advances without
+a duplicate system consent dialog. This build is `0.1.1 (3)`.
+
+Focused policy test compiled, but Xcode's macOS test runner could not launch
+through LaunchServices (error 20), so it did not execute. Debug build and
+`git diff --check` passed. Computer Use captured the foreground
+`Welcome to MacIsland` window at a permission step.
+
+### 2026-08-05 — implemented, awaiting direct motion verification: unified material morph
+
+Open and close now use an explicit visual phase (`compact`, `expanding`,
+`expanded`, `collapsing`) that is independent of semantic `notchState`.
+Every new phase receives a monotonic cancellation token; delayed expanded-page
+work and panel-envelope settlement both validate that token and direction before
+changing UI. Compact and expanded views are stable layers in one overlay: the
+compact activity stays present through early open and from the first close frame,
+while the expanded page crossfades, scales, and offsets within the same shell.
+The shell uses one high-damping 0.55-second spring for geometry, padding,
+corner radii, border, and shadow. The transparent AppKit envelope stays fixed
+until the matching phase settles, and the closed hover target is restored only
+after that settlement.
+
+Debug build passed. The project validator executed the new morph-state test
+successfully. It still reports four unrelated, pre-existing sizing expectation
+failures: two Snippets height values and two 640-point width expectations that
+conflict with the current 580-point compact-width design. Computer Use timed out
+when retrieving this audit process, so direct hover-open/hover-off verification
+remains required and is not claimed as complete.
+
+### 2026-08-05 — fixed: audit mode competing with first-run onboarding
+
+The build-aware onboarding check was also running after audit fixtures had
+cleared `firstLaunch`. On a new build this could open the production wizard on
+top of the audit surface and make it appear to disappear as the audit state
+continued. Audit mode now bypasses all onboarding preparation and presentation.
+Production mode still checks the current build and keeps the wizard visible
+until the user reaches its explicit finish action.
+
+Debug build passed. The Computer Use service timed out while resolving this
+ad-hoc Debug bundle, so no new screenshot is claimed for this fix.
+
+### 2026-08-05 — fixed: audit panel was not guaranteed to appear on the active desktop
+
+Audit mode added `canJoinAllSpaces` to make the Island available to automation.
+That allowed macOS to place the panel in a Space visible to Computer Use but
+not the user's active desktop. Audit now uses the same active-Space placement
+as production (`moveToActiveSpace`) and does not join every Space. The Debug
+media audit build was rebuilt and relaunched for direct confirmation.
+
+### 2026-08-05 — fixed: material-morph overlay omitted the expanded header
+
+The initial overlay migration kept `BoringHeader` only in the compact source
+layer. Once expanded content mounted, the tabs and header actions disappeared,
+and the page was measured without the header it had budgeted for. The expanded
+layer now contains its normal header followed by header-spaced page content,
+matching the pre-morph page hierarchy while retaining the compact source below
+it for continuity. This restores navigation, system actions, and the correct
+page-height budget for Home and every other page.
+
+Debug build passed and the fresh non-audit app was relaunched. Direct visual
+confirmation is still required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — fixed: expanded media artwork lost matched-geometry ownership
+
+When compact and expanded media layers were kept mounted for the material
+morph, both album-art views implicitly declared themselves as the
+`matchedGeometryEffect` source. SwiftUI consequently hid the expanded asset
+after the transition. Ownership is now explicit: compact artwork is the source
+while opening or closing and expanded artwork is the source once the Island is
+settled open. This preserves a continuous morph and keeps the normal expanded
+album art visible.
+
+Debug build passed and the fresh non-audit app was relaunched. Direct visual
+confirmation is required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — fixed: delayed compact media on first launch
+
+The retained compact-scene state begins neutral so it cannot inherit a stale
+activity from a prior presentation. On a cold launch with an already-playing
+track, that neutral state briefly supplied the shell geometry before SwiftUI's
+first retention callback captured media. The shell now resolves a live compact
+scene synchronously for that one first frame, then continues using retained
+geometry for the rest of each material morph.
+
+Debug build passed and the fresh non-audit app was relaunched. Direct visual
+confirmation is required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — revised: faster shared Island motion
+
+The Home-only bounce experiment was removed because it made the app feel
+inconsistent. All Island-owned transitions now share one faster 0.38-second,
+high-damping spring: hover open/close, page changes, and dynamic page sizing.
+Content fades, press interactions, onboarding, and staged expanded content were
+shortened proportionally (0.14, 0.12, 0.42, and 0.08 seconds respectively).
+The phase/cancellation model and fixed transparent host envelope remain intact.
+
+Debug build passed and the fresh non-audit app was relaunched. Direct visual
+confirmation is required; no Computer Use motion sequence is claimed.
+
+### 2026-08-05 — fixed: cold-launch media bootstrap
+
+With automatic media selection, startup waited for the asynchronous Now Playing
+capability probe before selecting an already-running Spotify or Music provider.
+The direct provider is now selected immediately before the Island window is
+created, initiating its track query before the first `ContentView` render.
+An initial implementation attempted that from `MusicManager.init` and exposed
+a recursive Defaults initialization crash; the bootstrap now runs only after
+the shared manager is fully constructed. The launch process remained alive for
+four seconds after a cold relaunch.
+
+Debug build passed. The app is running, but direct visual confirmation of the
+first media frame is still required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — fixed: delayed expanded-media destination
+
+The expanded player and its album-art destination were mounted only after the
+shell had begun opening. Even when artwork was already available, that made it
+appear late. The expanded page now mounts transparently at transition start so
+the shared artwork geometry is available from frame one; its reveal stage is
+40ms rather than 80ms. This does not change the asynchronous provider artwork
+fetch itself, but removes the UI-owned presentation delay.
+
+Debug build passed and the fresh non-audit app remained running after relaunch.
+Direct visual confirmation is required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — optimized: full Calendar scrolling and memory use
+
+Full Calendar previously requested EventKit events and reminders again for each
+selected day, so a fast date-wheel gesture could schedule many overlapping
+queries and allow stale results to repaint the surface. It now retains exactly
+one displayed month's result set, filters the selected day locally, replaces
+the cache only when the month changes, and rejects out-of-order async results
+with a generation guard. Reminder completion refreshes the same bounded range.
+The event list no longer repeats an already-applied filter, and the date wheel
+reuses its weekday formatter instead of allocating one per cell/body update.
+No visual or layout rules changed.
+
+Debug build passed. Focused Calendar presentation tests passed (2 tests, zero
+failures), and the fresh normal app is running for direct stress-scroll
+verification. No Computer Use performance trace is claimed.
+
+### 2026-08-05 — fixed: compact timer controls clipped after surface migration
+
+The material-morph surface used the physical bridge height for every closed
+activity. Timer controls are intentionally arranged below that bridge, so they
+were clipped by the new outer fixed-height proposal. Timer now uses its
+required bridge-plus-controls compact height, and the outer proposal
+interpolates that same height into the expanded Island. This restores the timer
+without reintroducing a separate window or shell animation.
+
+Debug build passed and the fresh normal app is running. Direct visual timer
+verification is required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — fixed: full Calendar host-frame jump between days
+
+Changing between days with different event counts resized both the visible
+Calendar surface and the transparent AppKit host window. The latter reframe was
+the source of the visible jump/glitch. While full Calendar is open, the host
+now reserves the current display's existing 65%-cap height once; only the
+opaque, content-sized Island surface changes with the selected day. The host
+returns to its normal size when Calendar closes, and no visible padding is
+added.
+
+Debug build passed and the fresh normal app is running. Direct July 15/16
+stress-scroll verification is required; no Computer Use motion sequence is
+claimed.
+
+### 2026-08-05 — fixed: late expanded-media artwork on every hover open
+
+The material-morph implementation kept compact album art as the
+`matchedGeometryEffect` source until the shell reached its final phase. The
+expanded player became visible earlier, but SwiftUI still withheld its artwork
+as a non-source destination. Ownership now transfers at the compact/expanded
+content handoff (40ms), so the already-rendered compact image remains visible
+as it grows into the expanded player rather than appearing near the end of the
+morph.
+
+Debug build passed and the fresh normal app is running. Direct repeated
+hover-open verification is required; no Computer Use motion sequence is
+claimed.
+
+### 2026-08-05 — fixed: stale host frame after repeated page resizing
+
+Each dynamic page resize scheduled a delayed panel-envelope settlement. During
+repeated tab switching, an already-queued older settlement could commit after
+a newer target and briefly move the host frame, producing an intermittent
+jump. Panel settlements now have their own monotonic generation token; a
+delayed callback may apply only if it is still the latest requested geometry.
+This preserves the existing visual page-size rules.
+
+Debug build passed and the fresh normal app is running. Direct repeated
+page-switch verification is required; no Computer Use motion sequence is
+claimed.
+
+### 2026-08-05 — fixed: empty compact Island during live-media startup
+
+The prior startup path created the Island before Spotify/Music had returned its
+first live playback state, leaving a visible empty black surface. MacIsland now
+selects the already-running direct provider before the window is revealed and
+holds that window invisible until the provider publishes its first result. The
+automatic media setup also keeps that direct controller instead of replacing it
+with the generic Now Playing controller during its later capability check.
+No cached song, artwork, or synthetic loading state is used: the first visible
+compact media Island is provider-backed.
+
+Debug build passed and a fresh normal app launch remained alive. Direct visual
+launch verification with an active Spotify or Music track is required; no
+Computer Use screenshot is claimed.
+
+### 2026-08-05 — fixed: stopping Mirror camera dismissed the Island
+
+The Mirror control labelled "Stop camera preview" incorrectly called the
+Island-close action. It now stops only the camera session. Mirror remains open
+while the pointer is inside its interaction region and follows the normal
+hover-off dismissal behavior afterward.
+
+Debug build passed. Direct camera-permission and hover-state verification is
+required; no Computer Use screenshot is claimed.
+
+### 2026-08-05 — corrected: startup gate now covers explicit media providers
+
+The first launch gate originally handled only the automatic “Now Playing”
+preference. An explicitly selected Spotify or Music provider could therefore
+still reveal an unpopulated compact Island before its own first response. The
+gate now applies to a running selected Spotify or Music provider as well, and
+the deferred setup is prevented from replacing that in-flight controller.
+
+Debug build passed and a fresh normal app launch remained alive. Direct visual
+launch verification with the selected provider playing is required; no Computer
+Use screenshot is claimed.

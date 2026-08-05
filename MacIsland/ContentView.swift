@@ -96,6 +96,10 @@ struct ContentView: View {
     @State private var gestureProgress: CGFloat = .zero
 
     @State private var haptics: Bool = false
+    /// The compact endpoint remains fixed for a complete open/close morph.
+    /// In particular, media must not change from its winged compact geometry
+    /// to the plain hardware-notch geometry when Home content is staged in.
+    @State private var retainedClosedScene: IslandScene = .collapsed
 
     @Namespace var albumArtNamespace
 
@@ -110,24 +114,28 @@ struct ContentView: View {
     private let zeroHeightHoverPadding: CGFloat = 10
 
     private var topCornerRadius: CGFloat {
-       ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
-                ? cornerRadiusInsets.opened.top
-                : cornerRadiusInsets.closed.top
+        let openRadius = Defaults[.cornerRadiusScaling]
+            ? cornerRadiusInsets.opened.top
+            : cornerRadiusInsets.closed.top
+        return cornerRadiusInsets.closed.top
+            + (openRadius - cornerRadiusInsets.closed.top) * vm.islandMorphProgress
     }
 
     private var currentNotchShape: NotchShape {
         NotchShape(
             topCornerRadius: topCornerRadius,
-            bottomCornerRadius: ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
-                ? cornerRadiusInsets.opened.bottom
-                : cornerRadiusInsets.closed.bottom
+            bottomCornerRadius: cornerRadiusInsets.closed.bottom
+                + ((Defaults[.cornerRadiusScaling]
+                    ? cornerRadiusInsets.opened.bottom
+                    : cornerRadiusInsets.closed.bottom)
+                    - cornerRadiusInsets.closed.bottom) * vm.islandMorphProgress
         )
     }
 
-    private var computedChinWidth: CGFloat {
+    private func computedChinWidth(for scene: IslandScene) -> CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
-        switch islandScene {
+        switch scene {
         case .battery:
             chinWidth = 640
         case .timer:
@@ -147,11 +155,41 @@ struct ContentView: View {
         return chinWidth
     }
 
-    private var islandScene: IslandScene {
+    private func closedActivityHeight(for scene: IslandScene) -> CGFloat {
+        guard scene == .timer else { return vm.effectiveClosedNotchHeight }
+        return vm.effectiveClosedNotchHeight
+            + ClosedTimerActivityGeometry.controlHeight
+            + ClosedTimerActivityGeometry.bottomInset
+    }
+
+    /// The outer proposal must follow the same compact-to-expanded height as
+    /// `IslandSurface`. Timer controls intentionally sit below the hardware
+    /// bridge, so constraining this to `vm.notchSize.height` clips them.
+    private var renderedIslandHeight: CGFloat {
+        let compactHeight = closedActivityHeight(for: shellClosedScene)
+        let expandedHeight = vm.currentOpenIslandSize.height
+        return compactHeight + (expandedHeight - compactHeight) * vm.islandMorphProgress
+    }
+
+    private var shellClosedScene: IslandScene {
+        // @State is deliberately initialized to the neutral geometry. A live
+        // media session can already exist before SwiftUI delivers the first
+        // onAppear capture, though; use that resolved source for the first
+        // frame rather than briefly rendering an empty Island.
+        if retainedClosedScene == .collapsed, compactIslandScene != .collapsed {
+            return compactIslandScene
+        }
+        return retainedClosedScene
+    }
+
+    /// The compact source stays independently resolved while expanded content
+    /// is overlaid. This prevents an opening Home page from replacing a media
+    /// live activity before its shared artwork can complete the morph.
+    private var compactIslandScene: IslandScene {
         IslandSceneResolver.resolve(
             IslandSceneInput(
                 isOnboarding: coordinator.helloAnimationRunning,
-                isOpen: vm.notchState == .open,
+                isOpen: false,
                 currentView: coordinator.currentView,
                 isBatteryActivityVisible: coordinator.expandingView.type == .battery
                     && coordinator.expandingView.show
@@ -188,20 +226,20 @@ struct ContentView: View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
                 let mainLayout = IslandSurface(
-                    isOpen: vm.notchState == .open,
+                    morphProgress: vm.islandMorphProgress,
                     isHovering: isHovering || (UIAuditMode.isEnabled && uiAudit.state == .hover),
-                    usesFlushClosedGeometry: islandScene == .collapsed,
+                    usesFlushClosedGeometry: shellClosedScene == .collapsed,
                     openSize: vm.currentOpenIslandSize,
                     closedSize: CGSize(
-                        width: (islandScene == .media || islandScene == .timer)
-                            ? computedChinWidth
+                        width: (shellClosedScene == .media || shellClosedScene == .timer)
+                            ? computedChinWidth(for: shellClosedScene)
                             : vm.closedSurfaceSize.width,
-                        height: vm.effectiveClosedNotchHeight
+                        height: closedActivityHeight(for: shellClosedScene)
                     ),
-                    closedContentWidth: (islandScene == .media || islandScene == .timer)
-                        ? computedChinWidth
+                    closedContentWidth: (shellClosedScene == .media || shellClosedScene == .timer)
+                        ? computedChinWidth(for: shellClosedScene)
                         : nil,
-                    closedHeight: vm.effectiveClosedNotchHeight,
+                    closedHeight: closedActivityHeight(for: shellClosedScene),
                     cornerRadiusScaling: Defaults[.cornerRadiusScaling],
                     shape: currentNotchShape,
                     topCornerRadius: topCornerRadius
@@ -209,10 +247,10 @@ struct ContentView: View {
                     NotchLayout()
                 }
 
-                let hoverHorizontalInset = vm.notchState == .closed
+                let hoverHorizontalInset = vm.usesClosedHoverTarget
                     ? max(0, (vm.hoverHitSize.width - vm.closedSurfaceSize.width) / 2)
                     : 0
-                let hoverBottomInset = vm.notchState == .closed
+                let hoverBottomInset = vm.usesClosedHoverTarget
                     ? max(0, vm.hoverHitSize.height - vm.closedSurfaceSize.height)
                     : 0
                 
@@ -221,15 +259,17 @@ struct ContentView: View {
                     // Both states need concrete dimensions for SwiftUI to
                     // interpolate the outer Island silhouette rather than
                     // only fading the page content.
-                    .frame(height: vm.notchSize.height)
+                    .frame(height: renderedIslandHeight)
                     // The clear target implements NotchMetrics.hoverHitFrame
                     // without enlarging or recoloring the physical bridge.
                     .padding(.horizontal, hoverHorizontalInset)
                     .padding(.bottom, hoverBottomInset)
                     // Open/close is a single physical-surface transition.
                     // Page sizing deliberately has no SwiftUI animation owner;
-                    // AppKit remains responsible for that separate motion.
+                    // both layers share the same model-owned transition.
                     .animation(IslandMotion.islandOpenClose, value: vm.notchState)
+                    .animation(IslandMotion.islandOpenClose, value: vm.notchSize)
+                    .animation(IslandMotion.islandOpenClose, value: vm.islandMorphProgress)
                     .conditionalModifier(true) { view in
                         return view
                             // AppKit owns panel-frame motion. Keeping a second
@@ -341,7 +381,7 @@ struct ContentView: View {
                 if vm.chinHeight > 0 {
                     Rectangle()
                         .fill(Color.islandHitTarget)
-                        .frame(width: computedChinWidth, height: vm.chinHeight)
+                        .frame(width: computedChinWidth(for: shellClosedScene), height: vm.chinHeight)
                 }
             }
         }
@@ -405,6 +445,13 @@ struct ContentView: View {
             anyDropDebounceTask?.cancel()
             anyDropDebounceTask = nil
         }
+        .modifier(
+            ClosedSceneRetention(
+                retainedScene: $retainedClosedScene,
+                isSettledCompact: vm.presentationPhase == .compact,
+                scene: compactIslandScene
+            )
+        )
         .onChange(of: coordinator.currentView) { _, _ in
             NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: vm)
         }
@@ -412,9 +459,31 @@ struct ContentView: View {
 
     @ViewBuilder
     func NotchLayout() -> some View {
+        ZStack(alignment: .top) {
+            compactActivityLayer
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .opacity(vm.compactContentOpacity)
+                .scaleEffect(0.985 + vm.compactContentOpacity * 0.015, anchor: .top)
+                .allowsHitTesting(vm.presentationPhase == .compact)
+                .zIndex(0)
+
+            if vm.isExpandedContentMounted {
+                expandedPageLayer
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .opacity(vm.expandedContentOpacity)
+                    .scaleEffect(0.985 + vm.expandedContentOpacity * 0.015, anchor: .top)
+                    .offset(y: (1 - vm.expandedContentOpacity) * 8)
+                    .allowsHitTesting(vm.notchState == .open)
+                    .zIndex(1)
+            }
+        }
+        .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
+    }
+
+    @ViewBuilder
+    private var compactActivityLayer: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                switch islandScene {
+            switch compactIslandScene {
                 case .onboarding:
                     Spacer()
                     HelloAnimation(onFinish: {
@@ -426,23 +495,25 @@ struct ContentView: View {
                     .padding(.top, 40)
                     Spacer()
                 case .battery:
-                    BatteryLiveActivity()
+                    compactPresentation { BatteryLiveActivity() }
                 case .systemHUD:
                     if coordinator.sneakPeek.type.isSystemState {
-                        SystemStateLiveActivity(
+                        compactPresentation { SystemStateLiveActivity(
                             type: coordinator.sneakPeek.type,
                             value: coordinator.sneakPeek.value
-                        )
+                        ) }
                     } else {
-                        InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
-                            .transition(.opacity)
+                        compactPresentation {
+                            InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
+                                .transition(.opacity)
+                        }
                     }
                 case .timer:
-                    TimerLiveActivity()
+                    compactPresentation { TimerLiveActivity() }
                 case .media:
-                    MusicLiveActivity().frame(alignment: .center)
+                    compactPresentation { MusicLiveActivity().frame(alignment: .center) }
                 case .face:
-                    BoringFaceAnimation()
+                    compactPresentation { BoringFaceAnimation() }
                 case .home, .shelf:
                     BoringHeader()
                         .frame(height: max(24, vm.effectiveClosedNotchHeight))
@@ -454,89 +525,109 @@ struct ContentView: View {
                             width: vm.closedSurfaceSize.width,
                             height: vm.effectiveClosedNotchHeight
                         )
-                }
+            }
 
-                if coordinator.sneakPeek.show {
-                          if coordinator.sneakPeek.type.requiresHUDReplacement && !Defaults[.inlineHUD] && vm.notchState == .closed && !vm.isScreenLocked {
-                              SystemEventIndicatorModifier(
-                                  eventType: $coordinator.sneakPeek.type,
-                                  value: $coordinator.sneakPeek.value,
-                                  icon: $coordinator.sneakPeek.icon,
-                                  sendEventBack: { newVal in
-                                      switch coordinator.sneakPeek.type {
-                                      case .volume:
-                                          VolumeManager.shared.setAbsolute(Float32(newVal))
-                                      case .brightness:
-                                          BrightnessManager.shared.setAbsolute(value: Float32(newVal))
-                                      default:
-                                          break
-                                      }
-                                  }
-                              )
-                              .padding(.bottom, 10)
-                              .padding(.leading, 4)
-                              .padding(.trailing, 8)
-                          }
-                          // Old sneak peek music
-                          else if coordinator.sneakPeek.type == .music {
-                              if vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard {
-                                  HStack(alignment: .center) {
-                                      Image(systemName: "music.note")
-                                      GeometryReader { geo in
-                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6) : Color.islandSecondaryText, minDuration: 1, frameWidth: geo.size.width)
-                                      }
-                                  }
-                                  .foregroundStyle(Color.islandSecondaryText)
-                                  .padding(.bottom, 10)
-                              }
-                          }
-                      }
-                  }
-              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
-                  view
-                      .fixedSize()
-              }
-              .zIndex(2)
-            if vm.notchState == .open {
-                Group {
-                    switch coordinator.currentView {
-                    case .home:
-                        NotchHomeView(
-                            albumArtNamespace: albumArtNamespace,
-                            availableSize: IslandStyle.expandedPageSize(
-                                openIslandSize: vm.openIslandSize,
-                                headerHeight: vm.effectiveClosedNotchHeight,
-                                surfaceHorizontalInset: topCornerRadius
-                                    + IslandStyle.openSurfacePadding
-                                )
+            compactSneakPeek
+                .zIndex(2)
+        }
+        .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
+            view.fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var compactSneakPeek: some View {
+        if coordinator.sneakPeek.show {
+            if coordinator.sneakPeek.type.requiresHUDReplacement && !Defaults[.inlineHUD] && vm.notchState == .closed && !vm.isScreenLocked {
+                SystemEventIndicatorModifier(
+                    eventType: $coordinator.sneakPeek.type,
+                    value: $coordinator.sneakPeek.value,
+                    icon: $coordinator.sneakPeek.icon,
+                    sendEventBack: { newValue in
+                        switch coordinator.sneakPeek.type {
+                        case .volume:
+                            VolumeManager.shared.setAbsolute(Float32(newValue))
+                        case .brightness:
+                            BrightnessManager.shared.setAbsolute(value: Float32(newValue))
+                        default:
+                            break
+                        }
+                    }
+                )
+                .padding(.bottom, 10)
+                .padding(.leading, 4)
+                .padding(.trailing, 8)
+            } else if coordinator.sneakPeek.type == .music,
+                      vm.notchState == .closed,
+                      !vm.hideOnClosed,
+                      Defaults[.sneakPeekStyles] == .standard {
+                HStack(alignment: .center) {
+                    Image(systemName: "music.note")
+                    GeometryReader { geo in
+                        MarqueeText(
+                            .constant(musicManager.songTitle + " - " + musicManager.artistName),
+                            textColor: Defaults[.playerColorTinting]
+                                ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6)
+                                : Color.islandSecondaryText,
+                            minDuration: 1,
+                            frameWidth: geo.size.width
                         )
-                    case .mirror:
-                        MirrorView()
-                    case .calendar:
-                        CalendarView()
-                    case .shelf:
-                        ShelfView()
-                    case .clipboard:
-                        ClipboardHistoryView()
-                    case .notes:
-                        QuickNotesView()
                     }
                 }
-                // The panel and header own the available page rect. A tab's
-                // intrinsic size must not enlarge, shift, or clip the island.
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, IslandStyle.headerContentSpacing)
-                // Keep the page host stable while its panel changes size.
-                // Re-identifying and fading this container also tears down
-                // hover tracking, which can make a tab change look like a
-                // close followed by another open.
-                .zIndex(1)
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-                .allowsHitTesting(vm.notchState == .open)
-                .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+                .foregroundStyle(Color.islandSecondaryText)
+                .padding(.bottom, 10)
             }
         }
-        .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
+    }
+
+    @ViewBuilder
+    private var expandedPageLayer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The header belongs to the expanded hierarchy. Keeping it here
+            // preserves the normal tabs and system actions while the compact
+            // source remains mounted beneath this layer during the morph.
+            BoringHeader()
+                .frame(height: max(24, vm.effectiveClosedNotchHeight))
+
+            expandedPageContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, IslandStyle.headerContentSpacing)
+        }
+        .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+    }
+
+    @ViewBuilder
+    private var expandedPageContent: some View {
+        Group {
+            switch coordinator.currentView {
+            case .home:
+                NotchHomeView(
+                    albumArtNamespace: albumArtNamespace,
+                    availableSize: IslandStyle.expandedPageSize(
+                        openIslandSize: vm.openIslandSize,
+                        headerHeight: vm.effectiveClosedNotchHeight,
+                        surfaceHorizontalInset: topCornerRadius + IslandStyle.openSurfacePadding
+                    )
+                )
+            case .mirror:
+                MirrorView()
+            case .calendar:
+                CalendarView()
+            case .shelf:
+                ShelfView()
+            case .clipboard:
+                ClipboardHistoryView()
+            case .notes:
+                QuickNotesView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compactPresentation<Presentation: View>(
+        @ViewBuilder content: () -> Presentation
+    ) -> some View {
+        content()
     }
 
     @ViewBuilder
@@ -601,7 +692,15 @@ struct ContentView: View {
                     RoundedRectangle(
                         cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
                 )
-                .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
+                .matchedGeometryEffect(
+                    id: "albumArt",
+                    in: albumArtNamespace,
+                    // Source ownership follows the visible layer handoff,
+                    // rather than waiting for the shell's later settled phase.
+                    // Otherwise expanded artwork remains hidden for most of
+                    // every hover-open animation.
+                    isSource: vm.compactContentOpacity > 0.5
+                )
                 .frame(
                     width: layout.wingWidth,
                     height: layout.wingWidth
@@ -1092,8 +1191,26 @@ struct FullScreenDropDelegate: DropDelegate {
 
 }
 
+private struct ClosedSceneRetention: ViewModifier {
+    @Binding var retainedScene: IslandScene
+    let isSettledCompact: Bool
+    let scene: IslandScene
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear(perform: captureIfClosed)
+            .onChange(of: scene) { _, _ in captureIfClosed() }
+            .onChange(of: isSettledCompact) { _, _ in captureIfClosed() }
+    }
+
+    private func captureIfClosed() {
+        guard isSettledCompact else { return }
+        retainedScene = scene
+    }
+}
+
 private struct IslandSurface<Content: View>: View {
-    let isOpen: Bool
+    let morphProgress: CGFloat
     let isHovering: Bool
     let usesFlushClosedGeometry: Bool
     let openSize: CGSize
@@ -1108,21 +1225,20 @@ private struct IslandSurface<Content: View>: View {
     var body: some View {
         content
             .frame(
-                width: isOpen
-                    ? max(0, openSize.width - openHorizontalInset * 2)
-                    : max(0, closedContentWidth ?? closedSize.width),
-                height: isOpen
-                    ? max(0, openSize.height - IslandStyle.openSurfacePadding)
-                    : max(0, closedSize.height),
+                width: contentSize.width,
+                height: contentSize.height,
                 alignment: .top
             )
             .padding(
                 .horizontal,
-                isOpen
-                    ? openHorizontalInset
-                    : (usesFlushClosedGeometry ? 0 : horizontalInset)
+                horizontalPadding
             )
-            .padding(.bottom, isOpen ? IslandStyle.openSurfacePadding : 0)
+            .padding(.bottom, bottomPadding)
+            // The shell owns a concrete frame in both states. This is what
+            // lets the black Island itself morph like one bubble; otherwise
+            // SwiftUI can resolve a content-driven width/height immediately
+            // and leave only artwork and page controls to animate.
+            .frame(width: surfaceSize.width, height: surfaceSize.height, alignment: .top)
             .background(Color.islandHardwareSurface)
             .clipShape(shape)
             .overlay(alignment: .top) {
@@ -1135,28 +1251,61 @@ private struct IslandSurface<Content: View>: View {
                 // Keep the closed physical bridge visually silent, while the
                 // expanded surface gets a clear, accessibility-aware edge.
                 shape
-                    .stroke(isOpen ? Color.islandBorder : .clear, lineWidth: 1)
+                    .stroke(Color.islandBorder.opacity(morphProgress), lineWidth: 1)
                     .allowsHitTesting(false)
             }
             .shadow(
-                color: ((isOpen || isHovering) && Defaults[.enableShadow])
+                color: ((morphProgress > 0 || isHovering) && Defaults[.enableShadow])
                     ? IslandStyle.panelShadow : .clear,
-                radius: isOpen && cornerRadiusScaling
-                    ? IslandStyle.panelShadowRadius
-                    : IslandStyle.closedHoverShadowRadius
+                radius: interpolate(
+                    IslandStyle.closedHoverShadowRadius,
+                    cornerRadiusScaling ? IslandStyle.panelShadowRadius : IslandStyle.closedHoverShadowRadius
+                )
             )
             .padding(.bottom, closedHeight == 0 ? 10 : 0)
     }
 
     private var horizontalInset: CGFloat {
-        if isOpen {
-            return cornerRadiusScaling ? cornerRadiusInsets.opened.top : cornerRadiusInsets.opened.bottom
-        }
         return cornerRadiusInsets.closed.bottom
     }
 
     private var openHorizontalInset: CGFloat {
         topCornerRadius + IslandStyle.openSurfacePadding
+    }
+
+    private var contentSize: CGSize {
+        CGSize(
+            width: interpolate(
+                max(0, closedContentWidth ?? closedSize.width),
+                max(0, openSize.width - openHorizontalInset * 2)
+            ),
+            height: interpolate(
+                max(0, closedSize.height),
+                max(0, openSize.height - IslandStyle.openSurfacePadding)
+            )
+        )
+    }
+
+    private var horizontalPadding: CGFloat {
+        interpolate(
+            usesFlushClosedGeometry ? 0 : horizontalInset,
+            openHorizontalInset
+        )
+    }
+
+    private var bottomPadding: CGFloat {
+        interpolate(0, IslandStyle.openSurfacePadding)
+    }
+
+    private var surfaceSize: CGSize {
+        CGSize(
+            width: contentSize.width + horizontalPadding * 2,
+            height: contentSize.height + bottomPadding
+        )
+    }
+
+    private func interpolate(_ closed: CGFloat, _ open: CGFloat) -> CGFloat {
+        closed + (open - closed) * morphProgress
     }
 }
 

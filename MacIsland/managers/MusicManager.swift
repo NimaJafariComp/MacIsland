@@ -55,10 +55,12 @@ class MusicManager: ObservableObject {
     @Published var isFavoriteTrack: Bool = false
     @Published private(set) var activeMediaSource: MediaControllerType = .nowPlaying
     @Published private(set) var mediaFallbackMessage: String?
+    @Published private(set) var isInitialProviderStateResolved = true
 
     // UI audit media fixtures must not be replaced by the real Now Playing
     // publisher while an audit state is being inspected.
     private var isAuditPlaybackOverrideActive = false
+    private var isAwaitingInitialProviderState = false
 
     private var artworkData: Data? = nil
 
@@ -122,6 +124,35 @@ class MusicManager: ObservableObject {
             // Initialize the active controller after deprecation check
             self.setActiveControllerBasedOnPreference()
         }
+    }
+
+    /// Called after the shared instance has been constructed and before the
+    /// Island window is created. Calling this from `init` can recursively
+    /// initialize Defaults' media-controller key on a cold launch.
+    /// Returns `true` only when an already-running direct provider needs its
+    /// first live playback response before the Island is revealed.
+    func bootstrapRunningDirectProvider() -> Bool {
+        let preferredProvider = Defaults[.mediaController]
+        let provider: MediaControllerType?
+        switch preferredProvider {
+        case .nowPlaying:
+            provider = runningDirectMediaController()
+        case .spotify:
+            provider = isDirectProviderRunning(.spotify) ? .spotify : nil
+        case .appleMusic:
+            provider = isDirectProviderRunning(.appleMusic) ? .appleMusic : nil
+        case .youtubeMusic:
+            provider = nil
+        }
+
+        guard let provider,
+              let controller = createController(for: provider)
+        else { return false }
+
+        isInitialProviderStateResolved = false
+        isAwaitingInitialProviderState = true
+        setActiveController(controller)
+        return true
     }
 
     deinit {
@@ -192,10 +223,19 @@ class MusicManager: ObservableObject {
         // preferences intact, but choose the running supported provider for
         // the automatic/default route.
         let controllerType: MediaControllerType
-        if preferredType == .nowPlaying, isNowPlayingDeprecated {
-            controllerType = runningDirectMediaController() ?? .appleMusic
+        if preferredType == .nowPlaying, let directProvider = runningDirectMediaController() {
+            controllerType = directProvider
+        } else if preferredType == .nowPlaying, isNowPlayingDeprecated {
+            controllerType = .appleMusic
         } else {
             controllerType = preferredType
+        }
+
+        // A direct provider was selected before the window was created. Do
+        // not replace it with an identical fresh controller while its first
+        // AppleScript query is still in flight.
+        if isAwaitingInitialProviderState, controllerType == activeMediaSource {
+            return
         }
 
         if let controller = createController(for: controllerType) {
@@ -244,6 +284,21 @@ class MusicManager: ObservableObject {
         return nil
     }
 
+    private func isDirectProviderRunning(_ provider: MediaControllerType) -> Bool {
+        let bundleIdentifier: String
+        switch provider {
+        case .spotify:
+            bundleIdentifier = "com.spotify.client"
+        case .appleMusic:
+            bundleIdentifier = "com.apple.Music"
+        case .nowPlaying, .youtubeMusic:
+            return false
+        }
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleIdentifier
+        }
+    }
+
     private var hasUsablePublishedTrack: Bool {
         let title = songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let artist = artistName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -284,6 +339,8 @@ class MusicManager: ObservableObject {
     @MainActor
     private func updateFromPlaybackState(_ state: PlaybackState) {
         guard !isAuditPlaybackOverrideActive else { return }
+        isInitialProviderStateResolved = true
+        isAwaitingInitialProviderState = false
 
         // Check for playback state changes (playing/paused)
         if state.isPlaying != self.isPlaying {

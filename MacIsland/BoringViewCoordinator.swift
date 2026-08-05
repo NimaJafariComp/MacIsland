@@ -15,6 +15,26 @@ import UserNotifications
 
 typealias WeatherDataLoader = @Sendable (URL) async throws -> (Data, URLResponse)
 
+/// Onboarding is completed once for each distributed app build. The system
+/// continues to own the underlying TCC permissions, so revisiting a step on a
+/// later build does not create a duplicate consent prompt when access is
+/// already granted.
+enum OnboardingBuildPolicy {
+    static func buildIdentifier(bundle: Bundle = .main) -> String {
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return "\(version) (\(build))"
+    }
+
+    static func requiresOnboarding(
+        firstLaunch: Bool,
+        completedBuild: String?,
+        currentBuild: String
+    ) -> Bool {
+        firstLaunch || completedBuild != currentBuild
+    }
+}
+
 enum WeatherLocationRequest: Equatable {
     case currentLocation
     case city(String)
@@ -458,9 +478,26 @@ class BoringViewCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     @AppStorage("firstLaunch") var firstLaunch: Bool = true
+    @AppStorage("completedOnboardingBuild") private var completedOnboardingBuild: String = ""
     @AppStorage("showWhatsNew") var showWhatsNew: Bool = true
     @AppStorage("musicLiveActivityEnabled") var musicLiveActivityEnabled: Bool = true
     @AppStorage("currentMicStatus") var currentMicStatus: Bool = true
+
+    /// A replacement DMG can keep this app's defaults and TCC grants. Show
+    /// the full setup flow for its new build while letting each permission
+    /// service skip its native prompt when macOS has already decided.
+    func prepareOnboardingForCurrentBuild() {
+        firstLaunch = OnboardingBuildPolicy.requiresOnboarding(
+            firstLaunch: firstLaunch,
+            completedBuild: completedOnboardingBuild.isEmpty ? nil : completedOnboardingBuild,
+            currentBuild: OnboardingBuildPolicy.buildIdentifier()
+        )
+    }
+
+    func finishOnboarding() {
+        completedOnboardingBuild = OnboardingBuildPolicy.buildIdentifier()
+        firstLaunch = false
+    }
 
     /// First-run onboarding asks before automatic weather needs this permission;
     /// a later weather refresh remains the fallback for existing installations.

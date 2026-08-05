@@ -300,6 +300,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var notificationObservers: [NSObjectProtocol] = []
     private var pendingPanelResize: DispatchWorkItem?
     private var unlockTransitionTask: Task<Void, Never>?
+    private var initialProviderStateCancellable: AnyCancellable?
+    private var isDeferringInitialIslandVisibility = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -347,6 +349,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         BatteryActivityManager.shared.shutdown()
         closeNotchTask?.cancel()
         unlockTransitionTask?.cancel()
+        initialProviderStateCancellable?.cancel()
         coordinator.setSystemStatesSuspended(true)
         cleanupDragDetectors()
         cleanupWindows()
@@ -564,12 +567,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // MacIsland is an accessory surface, not a transient inspector.
             // It must remain visible while another app owns keyboard focus.
             auditWindow.hidesOnDeactivate = false
-            if UIAuditMode.isEnabled {
-                // Audit needs the inspectable surface to follow Computer Use
-                // across Spaces. Keep this test-only behavior out of normal
-                // production presentation.
-                auditWindow.collectionBehavior.insert(.canJoinAllSpaces)
-            }
+            // Audit must remain on the person's active Space as well. Joining
+            // all Spaces can make a panel inspectable by automation while it
+            // is absent from the desktop the person is actually viewing.
             auditWindow.hasShadow = false
             auditWindow.isReleasedWhenClosed = false
             window = auditWindow
@@ -595,6 +595,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: ContentView()
                 .environmentObject(viewModel)
         )
+
+        if isDeferringInitialIslandVisibility {
+            window.alphaValue = 0
+        }
 
         if UIAuditMode.isEnabled {
             NSApp.setActivationPolicy(.regular)
@@ -623,42 +627,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         _ window: NSWindow,
         on screen: NSScreen,
         with viewModel: BoringViewModel,
-        changeAlpha: Bool = false
+        changeAlpha: Bool = false,
+        animateFrame: Bool = true
     ) {
-        if changeAlpha {
+        if changeAlpha && !isDeferringInitialIslandVisibility {
             window.alphaValue = 0
         }
 
-        // Update the same model that owns this window, then use that exact
-        // panel size for both AppKit and the hosted SwiftUI root.
-        viewModel.updateMetrics()
-        viewModel.updatePanelSize(for: coordinator.currentView)
+        // The view model is the source of truth during an interactive Island
+        // transition. Recomputing its panel size here races the SwiftUI
+        // morph, resulting in a second window jump part-way through it.
+        // Display-routing callers refresh metrics before reaching this method.
         let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
-        let shouldAnimateFrame = IslandMotion.shouldAnimateAppKitStateChanges
+        let shouldAnimateFrame = animateFrame && IslandMotion.shouldAnimateAppKitStateChanges
             && window.frame.integral != geometry.frame.integral
         if shouldAnimateFrame {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = IslandMotion.appKitStateDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.timingFunction = CAMediaTimingFunction(
+                    controlPoints: 0.20, 0.0, 0.0, 1.0
+                )
                 window.animator().setFrame(geometry.frame, display: true)
             }
         } else {
             window.setFrame(geometry.frame, display: true)
         }
-        window.alphaValue = 1
+        if !isDeferringInitialIslandVisibility {
+            window.alphaValue = 1
+        }
     }
 
     /// Page selection and its first content measurement can arrive in the
-    /// same run-loop turn. Coalescing them avoids starting a short transition
-    /// to the compact page, then interrupting it with its measured height.
+    /// same run-loop turn. Coalesce only to the next turn so the island starts
+    /// its continuous morph immediately instead of pausing before resizing.
     @MainActor
     private func schedulePanelResize() {
         pendingPanelResize?.cancel()
         let resize = DispatchWorkItem { [weak self] in
-            self?.adjustWindowPosition()
+            self?.applyModelPanelGeometry()
         }
         pendingPanelResize = resize
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16), execute: resize)
+        DispatchQueue.main.async(execute: resize)
+    }
+
+    /// Applies a frame that the view model has already chosen for an Island
+    /// interaction. This intentionally does not refresh metrics: doing that
+    /// while hover-open/close is in flight replaces the animated target with
+    /// a default page size and makes the panel jump.
+    @MainActor
+    private func applyModelPanelGeometry() {
+        if Defaults[.showOnAllDisplays] {
+            for screen in NSScreen.screens {
+                guard let uuid = screen.displayUUID,
+                      let window = windows[uuid],
+                      let viewModel = viewModels[uuid]
+                else { continue }
+                positionWindow(window, on: screen, with: viewModel, animateFrame: false)
+            }
+        } else if let window,
+                  let screen = window.screen ?? NSScreen.screen(withUUID: vm.screenUUID ?? "") {
+            positionWindow(window, on: screen, with: vm, animateFrame: false)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -854,6 +883,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Start an already-running direct player before ContentView builds its
+        // first compact Island. This avoids waiting for the asynchronous Now
+        // Playing capability probe to decide whether Spotify or Music is the
+        // active source.
+        if !UIAuditMode.isEnabled {
+            isDeferringInitialIslandVisibility = MusicManager.shared.bootstrapRunningDirectProvider()
+            if isDeferringInitialIslandVisibility {
+                initialProviderStateCancellable = MusicManager.shared.$isInitialProviderStateResolved
+                    .filter { $0 }
+                    .first()
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] _ in
+                        // The provider can answer before the panel creation
+                        // branch below completes, so reveal on the next turn.
+                        DispatchQueue.main.async {
+                            self?.revealIslandAfterInitialProviderState()
+                        }
+                    }
+            }
+        }
+
         // Audit mode needs one inspectable panel even when the user's
         // multi-display preference or saved display UUID no longer matches the
         // attached display. Keep that deterministic test-only path separate
@@ -880,19 +930,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupDragDetectors()
 
-        if coordinator.firstLaunch {
-            DispatchQueue.main.async {
-                self.showOnboardingWindow()
-            }
-        } else if MusicManager.shared.isNowPlayingDeprecated
-            && Defaults[.mediaController] == .nowPlaying
-        {
-            DispatchQueue.main.async {
-                self.showOnboardingWindow(step: .musicPermission)
+        // Audit launches seed deterministic fixtures and must never present or
+        // dismiss a production setup window. Outside audit mode, setup stays
+        // foregrounded until OnboardingView explicitly calls `onFinish`.
+        if !UIAuditMode.isEnabled {
+            coordinator.prepareOnboardingForCurrentBuild()
+
+            if coordinator.firstLaunch {
+                DispatchQueue.main.async {
+                    self.showOnboardingWindow()
+                }
+            } else if MusicManager.shared.isNowPlayingDeprecated
+                && Defaults[.mediaController] == .nowPlaying
+            {
+                DispatchQueue.main.async {
+                    self.showOnboardingWindow(step: .musicPermission)
+                }
             }
         }
 
         previousScreens = NSScreen.screens
+    }
+
+    @MainActor
+    private func revealIslandAfterInitialProviderState() {
+        guard isDeferringInitialIslandVisibility else { return }
+        isDeferringInitialIslandVisibility = false
+        initialProviderStateCancellable?.cancel()
+        initialProviderStateCancellable = nil
+
+        if Defaults[.showOnAllDisplays] {
+            windows.values.forEach { $0.alphaValue = 1 }
+        } else {
+            window?.alphaValue = 1
+        }
     }
 
     @MainActor
@@ -1084,6 +1155,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 if let window = windows[uuid], let viewModel = viewModels[uuid] {
+                    viewModel.updateMetrics()
+                    if viewModel.notchState == .closed {
+                        viewModel.notchSize = viewModel.closedNotchSize
+                    }
                     positionWindow(window, on: screen, with: viewModel, changeAlpha: changeAlpha)
 
                     if viewModel.notchState == .closed {

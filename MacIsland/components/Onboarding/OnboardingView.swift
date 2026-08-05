@@ -196,7 +196,7 @@ struct OnboardingView: View {
                 MusicControllerSelectionView(
                     onContinue: {
                         withAnimation(IslandMotion.content) {
-                            BoringViewCoordinator.shared.firstLaunch = false
+                            BoringViewCoordinator.shared.finishOnboarding()
                             step = .finished
                         }
                     }

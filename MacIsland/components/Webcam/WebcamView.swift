@@ -196,7 +196,10 @@ struct MirrorView: View {
         // Choosing the explicit Open action is the user's intent to enable the
         // optional module and, when necessary, to receive macOS's camera prompt.
         if isRunning {
-            vm.close()
+            // Stopping capture is not a dismissal request. Keep the Mirror
+            // page open while the pointer remains in the Island; the normal
+            // hover-off path owns any later collapse.
+            vm.toggleCameraPreview()
             return
         }
         Defaults[.showMirror] = true

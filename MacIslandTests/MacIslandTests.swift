@@ -91,10 +91,39 @@ final class MacIslandTests: XCTestCase {
 
         viewModel.open()
         XCTAssertEqual(viewModel.notchState, .open)
+        XCTAssertEqual(viewModel.presentationPhase, .expanding)
+        XCTAssertEqual(viewModel.compactContentOpacity, 1)
 
         viewModel.close()
         XCTAssertEqual(viewModel.notchState, .closed)
+        XCTAssertEqual(viewModel.presentationPhase, .collapsing)
+        XCTAssertEqual(viewModel.compactContentOpacity, 1)
+        XCTAssertEqual(viewModel.expandedContentOpacity, 0)
         viewModel.destroy()
+    }
+
+    func testOnboardingIsRequiredForEachNewDistributedBuild() {
+        XCTAssertTrue(
+            OnboardingBuildPolicy.requiresOnboarding(
+                firstLaunch: false,
+                completedBuild: nil,
+                currentBuild: "0.1.1 (3)"
+            )
+        )
+        XCTAssertTrue(
+            OnboardingBuildPolicy.requiresOnboarding(
+                firstLaunch: false,
+                completedBuild: "0.1.1 (2)",
+                currentBuild: "0.1.1 (3)"
+            )
+        )
+        XCTAssertFalse(
+            OnboardingBuildPolicy.requiresOnboarding(
+                firstLaunch: false,
+                completedBuild: "0.1.1 (3)",
+                currentBuild: "0.1.1 (3)"
+            )
+        )
     }
 
     func testClosedActivitiesAreVisibleBeforeFullscreenDetectionPublishes() {
