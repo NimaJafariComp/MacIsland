@@ -80,6 +80,11 @@ Release signing, notarization, GPL source-offer, and packaging requirements are
 documented in [RELEASE.md](RELEASE.md). Credentials and signing keys are never
 stored in this repository.
 
+> **Release status:** The currently published GitHub DMGs are ad-hoc builds for
+> evaluation only. They are not yet signed with a Developer ID certificate or
+> notarized by Apple, so macOS may display a Gatekeeper warning. Do not treat
+> them as production distribution artifacts.
+
 ## Development workflow
 
 MacIsland has one canonical build path: the Xcode project and the validation
