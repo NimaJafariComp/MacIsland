@@ -9,17 +9,26 @@ import AppKit
 
 enum ApplicationRelauncher {
     static func restart() {
-        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        // Launch Services may return the current instance for a bundle-ID
+        // lookup. Starting that request and immediately terminating can then
+        // leave no MacIsland process at all. Launch the exact running bundle
+        // after this process exits instead.
+        let relaunchHelper = Process()
+        relaunchHelper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunchHelper.arguments = [
+            "-c",
+            "sleep 0.5; exec /usr/bin/open -n \"$1\"",
+            "MacIslandRelauncher",
+            Bundle.main.bundleURL.path
+        ]
 
-        let workspace = NSWorkspace.shared
-
-        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleIdentifier)
-        else { return }
-
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
-
-        workspace.openApplication(at: appURL, configuration: configuration, completionHandler: nil)
+        do {
+            try relaunchHelper.run()
+        } catch {
+            // Do not terminate the usable current app if the handoff cannot
+            // be started (for example, if the bundle was moved mid-session).
+            return
+        }
 
         NSApplication.shared.terminate(nil)
     }

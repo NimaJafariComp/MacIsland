@@ -244,7 +244,9 @@ extension Defaults.Keys {
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)
 
     // MARK: Clipboard history
-    static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: false)
+    // Fresh installs capture plain copied text by default. Existing stored
+    // values are preserved, so a user who turns this off stays opted out.
+    static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)
     static let clipboardHistoryLimit = Key<Int>("clipboardHistoryLimit", default: 20)
     static let clipboardExcludedBundleIdentifiers = Key<String>("clipboardExcludedBundleIdentifiers", default: "")
     static let clipboardCaptureRichText = Key<Bool>("clipboardCaptureRichText", default: false)

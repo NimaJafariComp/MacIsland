@@ -1016,6 +1016,7 @@ private struct SystemStateLiveActivity: View {
 private struct ClipboardHistoryView: View {
     @ObservedObject private var coordinator = BoringViewCoordinator.shared
     @EnvironmentObject private var vm: BoringViewModel
+    @Default(.clipboardHistoryEnabled) private var clipboardHistoryEnabled: Bool
     @State private var copiedEntryID: ClipboardEntry.ID?
 
     private var entries: [ClipboardEntry] {
@@ -1042,7 +1043,7 @@ private struct ClipboardHistoryView: View {
                 }
             }
 
-            if Defaults[.clipboardHistoryEnabled] || UIAuditMode.isEnabled {
+            if clipboardHistoryEnabled || UIAuditMode.isEnabled {
                 if entries.isEmpty {
                     CompactSnippetsEmptyState(
                         title: "No snippets yet",

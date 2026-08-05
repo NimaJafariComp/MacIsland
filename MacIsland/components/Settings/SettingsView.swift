@@ -1274,7 +1274,7 @@ struct Shelf: View {
                 .disabled(!clipboardHistoryEnabled)
                 TextField("Excluded bundle IDs (comma-separated)", text: $clipboardExcludedBundleIdentifiers)
                     .disabled(!clipboardHistoryEnabled)
-                Text("Plain text is stored locally only after you turn this on. Rich text is ignored by default. Use bundle IDs such as `com.apple.Notes` to exclude apps.")
+                Text("Plain text is stored locally on this Mac. Turn capture off at any time; rich text is ignored by default. Use bundle IDs such as `com.apple.Notes` to exclude apps.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

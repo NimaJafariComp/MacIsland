@@ -1766,3 +1766,28 @@ Notes app could therefore remain in the recent-list cache until a relaunch.
 The shared Notes store now refreshes that cache quietly every ten minutes while
 MacIsland is running. The Quick Notes page still opens from cache and never
 shows a fetch/loading state simply because the user selected it.
+
+### 2026-08-05 — fixed: Snippets did not react to clipboard-history changes
+
+The Snippets page read the clipboard-history preference as a plain value, so a
+user who enabled capture in Settings could keep seeing the stale “Clipboard
+history is off” state until another unrelated view update occurred. The page
+now observes the same Defaults key as Settings and immediately replaces that
+state with the empty/history UI when the user enables capture. Explicit user
+preferences remain preserved.
+
+### 2026-08-05 — changed: Clipboard History is on for fresh installs
+
+Fresh installs now enable plain-text Clipboard History automatically, so the
+Snippets surface is ready to use without a Settings trip. Existing explicit
+preferences are preserved: turning capture off keeps it off. Rich text remains
+disabled by default and excluded bundle identifiers remain available.
+
+### 2026-08-05 — fixed: Restart could quit MacIsland without relaunching it
+
+Restart started an asynchronous Launch Services request and terminated the
+current process immediately. Launch Services could resolve the request to that
+same instance, leaving the user with no running MacIsland app. Restart now
+starts a short-lived helper process first; it waits for the current app to exit
+and opens the exact running app bundle as a new instance. If the helper cannot
+start, the current app stays open.
