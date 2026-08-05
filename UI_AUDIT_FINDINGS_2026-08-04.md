@@ -1757,3 +1757,12 @@ screen locks.
 
 Debug build passed. Direct rapid tab-switch visual verification is required;
 no Computer Use motion sequence is claimed.
+
+### 2026-08-05 — fixed: deleted Notes entries persisted in Quick Notes
+
+Quick Notes warmed its Apple Notes cache once at launch but did not schedule a
+later refresh while MacIsland stayed running. Notes removed directly in the
+Notes app could therefore remain in the recent-list cache until a relaunch.
+The shared Notes store now refreshes that cache quietly every ten minutes while
+MacIsland is running. The Quick Notes page still opens from cache and never
+shows a fetch/loading state simply because the user selected it.

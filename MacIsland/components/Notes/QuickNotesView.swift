@@ -72,6 +72,22 @@ final class AppleNotesStore: ObservableObject {
     @Published private(set) var errorMessage: String?
     private var lastRefreshDate: Date?
     private let refreshInterval: TimeInterval = 10 * 60
+    private var refreshTimer: Timer?
+
+    private init() {
+        // Notes does not publish per-note change notifications to other apps.
+        // Refresh the cache off-screen while MacIsland is running so entries
+        // deleted directly in Notes do not persist until a relaunch.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshIfNeeded()
+            }
+        }
+    }
+
+    deinit {
+        refreshTimer?.invalidate()
+    }
 
     func preload() async {
         await refreshIfNeeded()
