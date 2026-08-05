@@ -1744,3 +1744,16 @@ the deferred setup is prevented from replacing that in-flight controller.
 Debug build passed and a fresh normal app launch remained alive. Direct visual
 launch verification with the selected provider playing is required; no Computer
 Use screenshot is claimed.
+
+### 2026-08-05 — fixed: rapid dynamic-page switches moved the host panel
+
+Calendar reserved a stable transparent AppKit host while its content resized,
+but Mirror, Snippets, and Notes still changed that host frame on every tab
+selection. A rapid sequence could therefore let a late frame update visibly
+shift the Island. The AppKit host now reserves one display-capped envelope for
+the whole open session; only the opaque SwiftUI surface changes size between
+pages. The envelope resets only after the Island has settled closed or the
+screen locks.
+
+Debug build passed. Direct rapid tab-switch visual verification is required;
+no Computer Use motion sequence is claimed.

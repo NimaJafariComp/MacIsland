@@ -81,6 +81,10 @@ class BoringViewModel: NSObject, ObservableObject {
     private var deferredPresentationStage: DispatchWorkItem?
     private var presentationGeneration: UInt = 0
     private var panelGeometryGeneration: UInt = 0
+    /// The AppKit host remains fixed while the Island is open. SwiftUI owns
+    /// per-page surface sizing inside this transparent envelope, which avoids
+    /// a second window-frame animation during rapid tab changes.
+    private var openSessionPanelEnvelope: CGSize?
     
     let webcamManager = WebcamManager.shared
     @Published var isCameraExpanded: Bool = false
@@ -256,6 +260,9 @@ class BoringViewModel: NSObject, ObservableObject {
         deferredPanelCollapse?.cancel()
         deferredPanelCollapse = nil
         guard presentationPhase != .expanding, presentationPhase != .expanded else { return }
+        if presentationPhase == .compact {
+            openSessionPanelEnvelope = nil
+        }
         let transitionID = beginPresentationTransition(toward: .expanding)
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "open")
@@ -363,6 +370,7 @@ class BoringViewModel: NSObject, ObservableObject {
                 self.presentationPhase = .compact
                 self.isExpandedContentMounted = false
                 self.usesClosedHoverTarget = true
+                self.openSessionPanelEnvelope = nil
                 // Do not replace the tab until the user can no longer see
                 // the close morph. Replacing it mid-animation looks like the
                 // island briefly reopens to Home.
@@ -405,6 +413,7 @@ class BoringViewModel: NSObject, ObservableObject {
         expandedContentOpacity = 0
         isExpandedContentMounted = false
         usesClosedHoverTarget = true
+        openSessionPanelEnvelope = nil
         isBatteryPopoverActive = false
         edgeAutoOpenActive = false
         if isCameraExpanded {
@@ -570,23 +579,28 @@ class BoringViewModel: NSObject, ObservableObject {
         settlePanelEnvelope(at: targetPanelSize, while: .open)
     }
 
-    /// Calendar's black surface remains content-sized, but its transparent
-    /// AppKit host stays at the selected screen's capped Calendar height while
-    /// that page is open. This prevents a window-frame move for every day
-    /// whose item count differs from the previous one.
+    /// The black surface remains content-sized, but the transparent AppKit
+    /// host stays fixed for the whole open session. This prevents every
+    /// dynamic page (Calendar, Snippets, Mirror, and Notes) from issuing an
+    /// independent window-frame move while its SwiftUI content resizes.
     private func persistentPanelEnvelope(for view: NotchViews, visibleSize: CGSize) -> CGSize {
-        guard view == .calendar else {
-            return CGSize(width: visibleSize.width, height: visibleSize.height + shadowPadding)
+        if let openSessionPanelEnvelope {
+            return openSessionPanelEnvelope
         }
 
         let visibleHeight = NSScreen.screen(withUUID: screenUUID ?? "")?.visibleFrame.height
             ?? NSScreen.main?.visibleFrame.height
             ?? IslandExpandedPageSizing.calendarMaximumHeight
-        let calendarCap = min(
+        let dynamicPageCap = min(
             IslandExpandedPageSizing.calendarMaximumHeight,
             max(IslandExpandedPageSizing.calendarMinimumHeight, visibleHeight * 0.65)
         )
-        return CGSize(width: visibleSize.width, height: calendarCap + shadowPadding)
+        let envelope = CGSize(
+            width: visibleSize.width,
+            height: max(visibleSize.height, dynamicPageCap) + shadowPadding
+        )
+        openSessionPanelEnvelope = envelope
+        return envelope
     }
 
     private func activeOpenIslandSize(for view: NotchViews) -> CGSize {
