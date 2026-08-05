@@ -55,12 +55,19 @@ enum IslandMotion {
     }
 
     /// The closed bridge and expanded island are one physical surface. A
-    /// critically damped spring gives hover open/close the continuous,
-    /// Dynamic-Island-like response without overshooting into the menu bar.
+    /// low-bounce spring gives hover open/close the continuous, liquid
+    /// response of one physical surface without escaping into the menu bar.
     static var islandOpenClose: Animation {
         reduceMotion
             ? .linear(duration: durationBudget(for: .state, reduceMotion: true))
-            : .snappy(duration: 0.34, extraBounce: 0)
+            : .spring(duration: 0.46, bounce: 0.08)
+    }
+
+    /// The transparent AppKit host must not shrink until the visible SwiftUI
+    /// surface has completed its collapse. Keeping this in the same motion
+    /// contract prevents a frame resize from clipping the morph mid-flight.
+    static var islandOpenCloseSettleDelay: TimeInterval {
+        reduceMotion ? 0.01 : 0.46
     }
 
     /// AppKit owns the transparent panel frame while SwiftUI owns the island

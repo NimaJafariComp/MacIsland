@@ -192,6 +192,12 @@ struct ContentView: View {
                     isHovering: isHovering || (UIAuditMode.isEnabled && uiAudit.state == .hover),
                     usesFlushClosedGeometry: islandScene == .collapsed,
                     openSize: vm.currentOpenIslandSize,
+                    closedSize: CGSize(
+                        width: (islandScene == .media || islandScene == .timer)
+                            ? computedChinWidth
+                            : vm.closedSurfaceSize.width,
+                        height: vm.effectiveClosedNotchHeight
+                    ),
                     closedContentWidth: (islandScene == .media || islandScene == .timer)
                         ? computedChinWidth
                         : nil,
@@ -211,7 +217,11 @@ struct ContentView: View {
                     : 0
                 
                 mainLayout
-                    .frame(height: vm.notchState == .open ? vm.notchSize.height : nil)
+                    // Never animate from an unconstrained (`nil`) proposal.
+                    // Both states need concrete dimensions for SwiftUI to
+                    // interpolate the outer Island silhouette rather than
+                    // only fading the page content.
+                    .frame(height: vm.notchSize.height)
                     // The clear target implements NotchMetrics.hoverHitFrame
                     // without enlarging or recoloring the physical bridge.
                     .padding(.horizontal, hoverHorizontalInset)
@@ -1087,6 +1097,7 @@ private struct IslandSurface<Content: View>: View {
     let isHovering: Bool
     let usesFlushClosedGeometry: Bool
     let openSize: CGSize
+    let closedSize: CGSize
     let closedContentWidth: CGFloat?
     let closedHeight: CGFloat
     let cornerRadiusScaling: Bool
@@ -1099,10 +1110,10 @@ private struct IslandSurface<Content: View>: View {
             .frame(
                 width: isOpen
                     ? max(0, openSize.width - openHorizontalInset * 2)
-                    : closedContentWidth,
+                    : max(0, closedContentWidth ?? closedSize.width),
                 height: isOpen
                     ? max(0, openSize.height - IslandStyle.openSurfacePadding)
-                    : nil,
+                    : max(0, closedSize.height),
                 alignment: .top
             )
             .padding(

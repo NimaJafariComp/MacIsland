@@ -1383,3 +1383,21 @@ focused element, typed `Quick Notes audit input`, and captured the rendered
 text and newly enabled `Add to Notes` control. The test draft was not saved.
 Screenshot evidence:
 `/var/folders/vf/g7fkng710zz_qnp372ttbshm0000gn/T/com.openai.sky.CUAService/MacIsland Screenshot 2026-08-05 at 1.58.28 AM.jpeg`.
+
+### 2026-08-05 — fixed: hover collapse/expand frame clipping
+
+The Island previously reset its AppKit host panel to the compact frame at the
+same instant that SwiftUI began collapsing the visible surface. This clipped
+the surface and made hover dismissal appear nearly instantaneous. Open and
+close now use one low-bounce 0.46-second spring; the host panel retains its
+expanded frame until that surface transition settles, then collapses its
+transparent bounds. Rapid re-open cancels the deferred collapse so it cannot
+shrink an already-open Island.
+
+Computer Use captured clean compact and expanded endpoints after a rebuilt
+Debug app. Screenshot evidence:
+`/var/folders/vf/g7fkng710zz_qnp372ttbshm0000gn/T/com.openai.sky.CUAService/MacIsland Screenshot 2026-08-05 at 2.44.37 AM.jpeg`
+and
+`/var/folders/vf/g7fkng710zz_qnp372ttbshm0000gn/T/com.openai.sky.CUAService/1/MacIsland Screenshot 2026-08-05 at 2.44.37 AM.jpeg`.
+Computer Use screenshots are endpoint evidence only; final temporal feel must
+be confirmed by a person using the production build.

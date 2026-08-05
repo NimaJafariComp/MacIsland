@@ -55,6 +55,7 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published var openIslandSize: CGSize = preferredOpenIslandSize
     @Published var panelSize: CGSize = CGSize(width: preferredOpenIslandSize.width, height: preferredOpenIslandSize.height + shadowPadding)
     @Published private var requestedOpenHeights: [NotchViews: CGFloat] = [:]
+    private var deferredPanelCollapse: DispatchWorkItem?
     
     let webcamManager = WebcamManager.shared
     @Published var isCameraExpanded: Bool = false
@@ -225,15 +226,17 @@ class BoringViewModel: NSObject, ObservableObject {
 
     func open() {
         guard !isScreenLocked else { return }
+        deferredPanelCollapse?.cancel()
+        deferredPanelCollapse = nil
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "open")
         updateMetrics()
-        updatePanelSize(for: coordinator.currentView)
-        // AppKit owns the panel-frame animation. Updating the SwiftUI model in
-        // a second animation transaction makes the surface and its host panel
-        // race each other during a resize.
-        notchSize = activeOpenIslandSize(for: coordinator.currentView)
-        notchState = .open
+        let targetSize = activeOpenIslandSize(for: coordinator.currentView)
+        withAnimation(IslandMotion.islandOpenClose) {
+            notchSize = targetSize
+            panelSize = CGSize(width: targetSize.width, height: targetSize.height + shadowPadding)
+            notchState = .open
+        }
         NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
         DispatchQueue.main.async {
             os_signpost(.end, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID)
@@ -251,13 +254,31 @@ class BoringViewModel: NSObject, ObservableObject {
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         let wasOpen = notchState == .open
         os_signpost(.begin, log: Self.lifecycleLog, name: "Island Transition", signpostID: signpostID, "%{public}s", "close")
+        // Preserve the host panel's current frame during the visible morph.
+        // `updateMetrics()` computes the later compact host size, but applying
+        // it immediately clips the SwiftUI surface and makes collapse jump.
+        let expandedPanelSize = panelSize
         updateMetrics()
-        notchSize = closedNotchSize
-        closedNotchSize = notchSize
-        notchState = .closed
-        updatePanelSize(for: coordinator.currentView)
+        let collapsedPanelSize = panelSize
+        withAnimation(IslandMotion.islandOpenClose) {
+            panelSize = expandedPanelSize
+            notchSize = closedNotchSize
+            closedNotchSize = notchSize
+            notchState = .closed
+        }
         if wasOpen {
             NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+            deferredPanelCollapse?.cancel()
+            let collapse = DispatchWorkItem { [weak self] in
+                guard let self, self.notchState == .closed else { return }
+                self.panelSize = collapsedPanelSize
+                NotificationCenter.default.post(name: .islandPanelSizeDidChange, object: self)
+            }
+            deferredPanelCollapse = collapse
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + IslandMotion.islandOpenCloseSettleDelay,
+                execute: collapse
+            )
         }
         self.isBatteryPopoverActive = false
         self.coordinator.sneakPeek.show = false
