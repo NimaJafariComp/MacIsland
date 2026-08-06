@@ -17,6 +17,7 @@ AGENTS.md
 /STATUS.md
 /fixed.md
 /UI_AUDIT_*.md
+/VISUAL_REFERENCE.md
 
 # Distribution binaries are published as GitHub Release assets, not source files
 /Dist/*.dmg

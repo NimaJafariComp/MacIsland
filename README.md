@@ -94,10 +94,6 @@ See [AGENTS.md](AGENTS.md) for implementation, test, and release rules.
 | `Scripts/` | Build, validation, visual-audit, packaging, and release scripts |
 | `RELEASE.md` | Signing, notarization, source-offer, and distribution requirements |
 
-## Visual quality references
-
-MacIsland uses [Perch](https://apps.apple.com/us/app/dynamic-notch-island-perch/id6742724228?mt=12) and [Alcove](https://tryalcove.com/) as behavioral and quality references only. This project does not copy their artwork, layouts, text, or bundled assets.
-
 ## License, source, and notices
 
 Copyright © 2026 Nima Jafari.
