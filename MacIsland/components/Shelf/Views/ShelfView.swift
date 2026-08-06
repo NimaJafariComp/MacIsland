@@ -16,14 +16,16 @@ struct ShelfView: View {
     @State private var confirmsClear = false
     private let spacing: CGFloat = 8
 
-    private var clearConfirmationBinding: Binding<Bool> {
-        Binding(
-            get: { confirmsClear },
-            set: { isPresented in
-                confirmsClear = isPresented
-                vm.isModalInteractionActive = isPresented
-            }
-        )
+    private func setClearConfirmationPresented(_ isPresented: Bool) {
+        confirmsClear = isPresented
+        vm.isModalInteractionActive = isPresented
+    }
+
+    private func clearShelf() {
+        quickLookService.hide()
+        tvm.removeAll()
+        selection.clear()
+        setClearConfirmationPresented(false)
     }
 
     var body: some View {
@@ -93,16 +95,6 @@ struct ShelfView: View {
             .animation(IslandMotion.content, value: vm.dragDetectorTargeting)
             .contentShape(Rectangle())
             .onTapGesture { selection.clear() }
-            .alert("Clear Shelf?", isPresented: clearConfirmationBinding) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear", role: .destructive) {
-                    quickLookService.hide()
-                    tvm.removeAll()
-                    selection.clear()
-                }
-            } message: {
-                Text("Remove all files and links from Shelf?")
-            }
     }
 
     var content: some View {
@@ -171,58 +163,92 @@ struct ShelfView: View {
     }
 
     private var shelfToolbar: some View {
+        Group {
+            if confirmsClear {
+                clearConfirmationToolbar
+            } else {
+                standardShelfToolbar
+            }
+        }
+    }
+
+    private var clearConfirmationToolbar: some View {
         HStack(spacing: 6) {
-            Label("\(tvm.items.count) \(tvm.items.count == 1 ? "item" : "items")", systemImage: "tray.full")
+            Label("Clear all Shelf items?", systemImage: "trash")
                 .font(IslandTypography.metadata.weight(.medium))
-                .foregroundStyle(Color.islandSecondaryText)
+                .foregroundStyle(Color.islandPrimaryText)
 
             Spacer(minLength: 0)
 
-            if selection.hasSelection {
-                Button(role: .destructive) {
-                    selection.selectedItems(in: tvm.items).forEach(tvm.remove)
-                    selection.clear()
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.delete, modifiers: [])
-                .help("Remove selected items")
-                .accessibilityLabel("Remove selected Shelf items")
+            Button("Cancel") {
+                setClearConfirmationPresented(false)
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
 
-            Button {
-                selection.moveSelection(by: -1, in: tvm.items)
-            } label: {
-                Image(systemName: "chevron.left")
+            Button("Clear", role: .destructive) {
+                clearShelf()
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.leftArrow, modifiers: [.control])
-            .disabled(tvm.items.isEmpty)
-            .help("Select previous item")
-            .accessibilityLabel("Select previous Shelf item")
-
-            Button {
-                selection.moveSelection(by: 1, in: tvm.items)
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.rightArrow, modifiers: [.control])
-            .disabled(tvm.items.isEmpty)
-            .help("Select next item")
-            .accessibilityLabel("Select next Shelf item")
-
-            Menu {
-                Button("Clear Shelf", role: .destructive) {
-                    clearConfirmationBinding.wrappedValue = true
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .help("Shelf actions")
-            .accessibilityLabel("Shelf actions")
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.red)
+            .keyboardShortcut(.return, modifiers: [])
         }
     }
-}
+
+    private var standardShelfToolbar: some View {
+        HStack(spacing: 6) {
+                Label("\(tvm.items.count) \(tvm.items.count == 1 ? "item" : "items")", systemImage: "tray.full")
+                    .font(IslandTypography.metadata.weight(.medium))
+                    .foregroundStyle(Color.islandSecondaryText)
+
+                Spacer(minLength: 0)
+
+                if selection.hasSelection {
+                    Button(role: .destructive) {
+                        selection.selectedItems(in: tvm.items).forEach(tvm.remove)
+                        selection.clear()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.delete, modifiers: [])
+                    .help("Remove selected items")
+                    .accessibilityLabel("Remove selected Shelf items")
+                }
+
+                Button {
+                    selection.moveSelection(by: -1, in: tvm.items)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.leftArrow, modifiers: [.control])
+                .disabled(tvm.items.isEmpty)
+                .help("Select previous item")
+                .accessibilityLabel("Select previous Shelf item")
+
+                Button {
+                    selection.moveSelection(by: 1, in: tvm.items)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.rightArrow, modifiers: [.control])
+                .disabled(tvm.items.isEmpty)
+                .help("Select next Shelf item")
+                .accessibilityLabel("Select next Shelf item")
+
+                Menu {
+                    Button("Clear Shelf", role: .destructive) {
+                        setClearConfirmationPresented(true)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .help("Shelf actions")
+                .accessibilityLabel("Shelf actions")
+            }
+        }
+    }
