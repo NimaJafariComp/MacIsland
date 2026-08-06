@@ -1,32 +1,60 @@
-# MacIsland
+<p align="center">
+  <img src="MacIsland/Assets.xcassets/AppIcon.appiconset/notch-stage-icon2%2010.png" width="120" alt="MacIsland app icon">
+</p>
 
-MacIsland is a native macOS notch utility built with SwiftUI and AppKit. It
-combines media controls, calendar and reminders, camera mirror, file shelf,
-battery state, gestures, and native system HUDs in a notch-aware panel.
+<h1 align="center">MacIsland</h1>
 
-The native rebuild is in progress. See [PLAN.md](PLAN.md) for scope, design
-rules, validation gates, and current status.
+<p align="center">A native macOS island for the notch: media, calendar, weather, files, notes, timers, and system controls in one focused surface.</p>
 
-## Visual quality references
+<p align="center">
+  <a href="https://github.com/NimaJafariComp/MacIsland/releases"><img src="https://img.shields.io/github/v/release/NimaJafariComp/MacIsland?display_name=tag&label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="GPL-3.0-or-later license"></a>
+  <a href="https://github.com/NimaJafariComp/MacIsland"><img src="https://img.shields.io/badge/platform-macOS%2014%2B-black" alt="macOS 14 or later"></a>
+</p>
 
-MacIsland uses Alcove and Perch as quality references for behavior, native
-integration, motion restraint, and feature coverage—not as sources of artwork,
-copy, layouts, or bundled assets.
+<p align="center">
+  <a href="https://github.com/NimaJafariComp/MacIsland/releases">Download the latest DMG</a>
+  ·
+  <a href="#build-from-source">Build from source</a>
+  ·
+  <a href="#license-source-and-notices">License and notices</a>
+</p>
 
-- [Perch — official App Store page](https://apps.apple.com/us/app/dynamic-notch-island-perch/id6742724228?mt=12)
-- [Alcove — official site](https://tryalcove.com/)
-- [MacIsland visual acceptance ledger](fixed.md)
+![MacIsland Home showing weather, media controls, and calendar](Docs/images/macisland-home.png)
 
-Reference screenshots remain on their official pages. This repository does not
-copy or hotlink third-party product artwork; comparison captures belong in the
-approved visual-test record once the macOS UI-test host has Assistive Access.
+MacIsland keeps useful, time-sensitive controls at the top of your screen without turning the menu bar into another dashboard. It is written in SwiftUI and AppKit for macOS and adapts its island height to the active surface.
 
-## Build the native app
+## What’s in the island
 
-Requirements:
+| Surface | What it does |
+| --- | --- |
+| **Now Playing** | Shows active media with artwork, transport controls, progress, volume, output selection, and provider-aware playback |
+| **Calendar & reminders** | Surfaces today’s schedule and opens a resizable day view with a direct path to Apple Calendar |
+| **Weather** | Shows local conditions using your current location or a city you choose in Settings |
+| **Shelf & snippets** | Keeps dropped files, links, and clipboard history within reach for sharing and reuse |
+| **Quick Notes** | Creates notes in the macOS Notes app and keeps recent notes available in the island |
+| **Mirror** | Opens a camera preview with a software ring-light treatment and privacy-first pinned behavior |
+| **Timers & system controls** | Includes countdown timers, stopwatch, battery details, and optional system HUD replacement |
 
-- macOS 15.6 or later for development
-- Xcode 26 or later
+## Screenshots
+
+| Collapsed media | Home | Shelf |
+| --- | --- | --- |
+| ![Collapsed island showing album art and playback activity](Docs/images/macisland-collapsed-media.png) | ![Home surface with weather, media, and calendar](Docs/images/macisland-home.png) | ![Empty Shelf surface ready for files or links](Docs/images/macisland-shelf.png) |
+
+These captures come from the current Debug app. They are repository-owned UI evidence, not mockups or third-party artwork.
+
+## Install from a release
+
+1. Download the latest `MacIsland-*-arm64-adhoc.dmg` from [GitHub Releases](https://github.com/NimaJafariComp/MacIsland/releases)
+2. Drag `MacIsland.app` to `Applications`, then open it and complete the setup flow
+3. Choose the features you want in MacIsland Settings, including Launch at Login
+
+> Current GitHub DMGs are ad-hoc evaluation builds. They are not Developer ID signed or Apple-notarized, so Gatekeeper can show a warning. See [RELEASE.md](RELEASE.md) for signing and release requirements.
+
+## Build from source
+
+MacIsland targets macOS 14 or later. Development uses macOS 15.6 or later and Xcode 26 or later.
 
 ```bash
 xcodebuild \
@@ -38,65 +66,42 @@ xcodebuild \
   build
 ```
 
-The product is written to:
+This command writes the Debug product to `/private/tmp/macisland-derived/Build/Products/Debug/MacIsland.app`. Open `MacIsland.xcodeproj` in Xcode when you need signing, debugging, or macOS permission prompts.
 
-```text
-/private/tmp/macisland-derived/Build/Products/Debug/MacIsland.app
-```
+## Validate a change
 
-Open `MacIsland.xcodeproj` in Xcode to run with signing and permissions.
-
-Run the full local delivery gate with:
+Run the project delivery gate before packaging a release:
 
 ```bash
 Scripts/validate-xcode.sh
 ```
 
-Capture a reviewed visual state on an approved host with:
+The repository also includes a repeatable visual-audit workflow. It records display metadata with captures and avoids claiming interaction coverage when the host lacks Assistive Access.
 
 ```bash
 Scripts/visual-audit.sh /path/to/MacIsland.app /absolute/path/to/audit-output home
-```
-
-The approved native-2× core-state baselines are recorded in
-`Audit/Baselines/native-2x/manifest.plist`. Verify their image integrity,
-display metadata, and required state coverage with:
-
-```bash
 Scripts/verify-ui-baselines.sh Audit/Baselines/native-2x/manifest.plist
 ```
 
-On an Assistive-Access host with `cliclick`, prepare the deterministic core
-closed, Home, or hover state before the capture prompt with:
+See [AGENTS.md](AGENTS.md) for implementation, test, and release rules.
 
-```bash
-Scripts/prepare-ui-audit-state.sh /path/to/MacIsland.app home
-```
+## Project layout
 
-The audit harness records display/software metadata with each PNG and refuses to
-claim interaction coverage when Assistive Access is unavailable.
+| Path | Purpose |
+| --- | --- |
+| `MacIsland/` | SwiftUI, AppKit, models, managers, and bundled resources |
+| `MacIslandTests/` | Unit and behavior tests |
+| `Scripts/` | Build, validation, visual-audit, packaging, and release scripts |
+| `RELEASE.md` | Signing, notarization, source-offer, and distribution requirements |
 
-Release signing, notarization, GPL source-offer, and packaging requirements are
-documented in [RELEASE.md](RELEASE.md). Credentials and signing keys are never
-stored in this repository.
+## Visual quality references
 
-> **Release status:** The currently published GitHub DMGs are ad-hoc builds for
-> evaluation only. They are not yet signed with a Developer ID certificate or
-> notarized by Apple, so macOS may display a Gatekeeper warning. Do not treat
-> them as production distribution artifacts.
+MacIsland uses [Perch](https://apps.apple.com/us/app/dynamic-notch-island-perch/id6742724228?mt=12) and [Alcove](https://tryalcove.com/) as behavioral and quality references only. This project does not copy their artwork, layouts, text, or bundled assets.
 
-## Development workflow
+## License, source, and notices
 
-MacIsland has one canonical build path: the Xcode project and the validation
-commands above. The embedded XPC helper is built as part of the same project.
-Implementation, test, visual-QA, release, and reporting rules live in
-[AGENTS.md](AGENTS.md).
+Copyright © 2026 Nima Jafari.
 
-## Open-source foundation
+MacIsland is licensed under [GNU GPL-3.0-or-later](LICENSE). The corresponding source for any binary release is the source at its matching [`v<version>` tag](https://github.com/NimaJafariComp/MacIsland/tags), including the build scripts and dependency-resolution metadata in this repository.
 
-MacIsland is derived from
-[Boring Notch](https://github.com/TheBoredTeam/boring.notch) revision
-`8dd02e7555cbe48899524c61d24e50703e68ff68`.
-
-MacIsland is licensed under GPL-3.0. See [LICENSE](LICENSE). Third-party notices
-are preserved in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+MacIsland contains modifications derived from [Boring Notch](https://github.com/TheBoredTeam/boring.notch) revision `8dd02e7555cbe48899524c61d24e50703e68ff68`. Legal attribution is preserved in [NOTICE](NOTICE), and third-party notices are preserved in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

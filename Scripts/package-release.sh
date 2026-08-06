@@ -15,7 +15,10 @@ trap 'rm -rf "$staging_dir"' EXIT
 [[ -d "$app_path" ]] || { print -u2 "Missing app: $app_path"; exit 66; }
 mkdir -p "$staging_dir/MacIsland"
 ditto "$app_path" "$staging_dir/MacIsland/MacIsland.app"
-cp "$repo_root/LICENSE" "$repo_root/THIRD_PARTY_LICENSES" "$staging_dir/MacIsland/"
+version=$(plutil -extract CFBundleShortVersionString raw "$app_path/Contents/Info.plist")
+source_url="https://github.com/NimaJafariComp/MacIsland/tree/v${version}"
+cp "$repo_root/LICENSE" "$repo_root/NOTICE" "$repo_root/THIRD_PARTY_LICENSES" "$staging_dir/MacIsland/"
+print -r -- "MacIsland ${version} corresponding source: ${source_url}" > "$staging_dir/MacIsland/SOURCE_CODE.txt"
 codesign --verify --deep --strict --verbose=2 "$staging_dir/MacIsland/MacIsland.app"
 rm -f "$archive_path"
 ditto -c -k --keepParent "$staging_dir/MacIsland" "$archive_path"

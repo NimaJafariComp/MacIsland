@@ -34,8 +34,8 @@ final class MacIslandTests: XCTestCase {
     }
 
     func testExpandedPageSizingUsesCompactFloorAndContentCaps() {
-        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 0), 190)
-        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 8), 358)
+        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 0), 154)
+        XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 8), 322)
         XCTAssertEqual(IslandExpandedPageSizing.snippetsHeight(entryCount: 100), 440)
 
         XCTAssertEqual(IslandExpandedPageSizing.calendarHeight(itemCount: 0), 220)
@@ -205,7 +205,7 @@ final class MacIslandTests: XCTestCase {
             XCTAssertEqual(IslandMotion.durationBudget(for: phase, reduceMotion: true), 0.01)
         }
 
-        XCTAssertEqual(IslandMotion.appKitStateDuration(reduceMotion: false), 0.28)
+        XCTAssertEqual(IslandMotion.appKitStateDuration(reduceMotion: false), 0.22)
         XCTAssertEqual(IslandMotion.appKitStateDuration(reduceMotion: true), 0.01)
         XCTAssertTrue(IslandMotion.shouldAnimateAppKitStateChanges(reduceMotion: false))
         XCTAssertFalse(IslandMotion.shouldAnimateAppKitStateChanges(reduceMotion: true))
@@ -264,20 +264,20 @@ final class MacIslandTests: XCTestCase {
     }
 
     func testPanelGeometryKeepsTheBaselineEnvelopeTopCenteredAcrossPageChanges() {
-        XCTAssertEqual(preferredOpenIslandSize, CGSize(width: 640, height: 190))
+        XCTAssertEqual(preferredOpenIslandSize, CGSize(width: 580, height: 190))
         XCTAssertEqual(shadowPadding, 20)
 
         let panel = IslandPanelGeometry(
             screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
-            panelSize: CGSize(width: 640, height: 210)
+            panelSize: CGSize(width: 580, height: 210)
         )
-        XCTAssertEqual(panel.frame, CGRect(x: 436, y: 772, width: 640, height: 210))
+        XCTAssertEqual(panel.frame, CGRect(x: 466, y: 772, width: 580, height: 210))
 
         // A narrow display may constrain the panel, but it remains centered
         // and attached to the display's top edge rather than a page's height.
         let constrained = IslandPanelGeometry(
             screenFrame: CGRect(x: 100, y: 50, width: 320, height: 240),
-            panelSize: CGSize(width: 640, height: 210)
+            panelSize: CGSize(width: 580, height: 210)
         )
         XCTAssertEqual(constrained.frame, CGRect(x: 100, y: 80, width: 320, height: 210))
     }
@@ -315,7 +315,7 @@ final class MacIslandTests: XCTestCase {
         XCTAssertTrue(targetAir.hasPhysicalNotch)
         XCTAssertEqual(targetAir.physicalNotchSize, CGSize(width: 180, height: 32))
         XCTAssertEqual(targetAir.openIslandSize, preferredOpenIslandSize)
-        XCTAssertEqual(targetAir.panelSize, CGSize(width: 640, height: 210))
+        XCTAssertEqual(targetAir.panelSize, CGSize(width: 580, height: 210))
 
         Defaults[.nonNotchHeightMode] = .matchMenuBar
         let notchless = NotchMetrics(input: NotchMetricsInput(
@@ -417,6 +417,22 @@ final class MacIslandTests: XCTestCase {
         let noTrack = PlaybackState(bundleIdentifier: "com.apple.Music")
         XCTAssertFalse(MediaPresentationPolicy.hasTrack(noTrack))
         XCTAssertTrue(MediaPresentationPolicy.isIdle(noTrack))
+    }
+
+    func testAutomaticMediaProviderPromotesSpotifyForSpotifyConnect() {
+        XCTAssertEqual(
+            AutomaticMediaProviderSelection.directProvider(
+                preferred: .nowPlaying,
+                runningBundleIdentifiers: ["com.spotify.client"]
+            ),
+            .spotify
+        )
+        XCTAssertNil(
+            AutomaticMediaProviderSelection.directProvider(
+                preferred: .appleMusic,
+                runningBundleIdentifiers: ["com.spotify.client"]
+            )
+        )
     }
 
     func testHomeLayoutBudgetKeepsMediaPrimaryAndBoundsOptionalModules() {

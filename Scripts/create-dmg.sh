@@ -24,7 +24,10 @@ payload_dir="$staging_dir/MacIsland"
 mkdir -p "$payload_dir"
 ditto "$app_path" "$payload_dir/MacIsland.app"
 ln -s /Applications "$payload_dir/Applications"
-cp "$repo_root/LICENSE" "$repo_root/THIRD_PARTY_LICENSES" "$payload_dir/"
+version=$(plutil -extract CFBundleShortVersionString raw "$app_path/Contents/Info.plist")
+source_url="https://github.com/NimaJafariComp/MacIsland/tree/v${version}"
+cp "$repo_root/LICENSE" "$repo_root/NOTICE" "$repo_root/THIRD_PARTY_LICENSES" "$payload_dir/"
+print -r -- "MacIsland ${version} corresponding source: ${source_url}" > "$payload_dir/SOURCE_CODE.txt"
 
 # Standard Finder DMG when DiskManagement is available.
 if hdiutil create -srcfolder "$payload_dir" -format UDZO -volname MacIsland "$dmg_path"; then

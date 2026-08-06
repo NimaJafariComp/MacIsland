@@ -508,6 +508,11 @@ class BoringViewCoordinator: ObservableObject {
         if currentWeatherLocationResolver === resolver {
             currentWeatherLocationResolver = nil
         }
+        // The startup refresh may have run while Location Services was still
+        // awaiting the first-run decision. Refresh once that decision is
+        // available instead of leaving Home on a stale failure until the next
+        // scheduled interval.
+        refreshWeather(force: true, silently: true)
     }
 
     /// Timer completion keeps this authorization request out of an active timer
@@ -893,7 +898,9 @@ class BoringViewCoordinator: ObservableObject {
             }
         }
         let location = try await resolver.currentLocation()
-        let placemark = try await CLGeocoder().reverseGeocodeLocation(location).first
+        // A reverse-geocoding outage must not discard a valid coordinate. The
+        // forecast endpoint can still provide current weather for it.
+        let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first
         let displayName = [placemark?.locality, placemark?.administrativeArea, placemark?.country]
             .compactMap { $0 }
             .first(where: { !$0.isEmpty }) ?? "Current Location"

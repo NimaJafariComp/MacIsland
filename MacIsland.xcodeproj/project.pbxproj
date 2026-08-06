@@ -123,6 +123,10 @@
 		B17266DF2C64DFA00031BA0D /* BundleInfos.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17266DE2C64DFA00031BA0D /* BundleInfos.swift */; };
 		B17266E12C6532560031BA0D /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = B17266E02C6532560031BA0D /* Localizable.xcstrings */; };
 		F0A110012F00000100000001 /* TimerAlarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = F0A110022F00000100000001 /* TimerAlarm.wav */; };
+		F0A110052F00000100000001 /* NOTICE.md in Resources */ = {isa = PBXBuildFile; fileRef = F0A110062F00000100000001 /* NOTICE.md */; };
+		F0A110072F00000100000001 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = F0A110032F00000100000001 /* THIRD_PARTY_NOTICES.md */; };
+		F0A110082F00000100000001 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = F0A110092F00000100000001 /* LICENSE */; };
+		F0A1100A2F00000100000001 /* THIRD_PARTY_LICENSES in Resources */ = {isa = PBXBuildFile; fileRef = F0A1100B2F00000100000001 /* THIRD_PARTY_LICENSES */; };
 		B17266E32C65F7FB0031BA0D /* WhatsNewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17266E22C65F7FB0031BA0D /* WhatsNewView.swift */; };
 		B172AAC02C95DA0B001623F1 /* InlineHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = B172AABF2C95DA0B001623F1 /* InlineHUD.swift */; };
 		B18654392C6F4990000B926A /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = B18654382C6F4990000B926A /* KeyboardShortcuts */; };
@@ -302,6 +306,9 @@
 		B17266E02C6532560031BA0D /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		F0A110022F00000100000001 /* TimerAlarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = TimerAlarm.wav; sourceTree = "<group>"; };
 		F0A110032F00000100000001 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		F0A110062F00000100000001 /* NOTICE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = NOTICE.md; sourceTree = "<group>"; };
+		F0A110092F00000100000001 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		F0A1100B2F00000100000001 /* THIRD_PARTY_LICENSES */ = {isa = PBXFileReference; lastKnownFileType = text; path = THIRD_PARTY_LICENSES; sourceTree = SOURCE_ROOT; };
 		B17266E22C65F7FB0031BA0D /* WhatsNewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewView.swift; sourceTree = "<group>"; };
 		B172AABF2C95DA0B001623F1 /* InlineHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineHUD.swift; sourceTree = "<group>"; };
 		B186543B2C6F49AE000B926A /* ShortcutConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutConstants.swift; sourceTree = "<group>"; };
@@ -622,7 +629,10 @@
 		F0A110042F00000100000001 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				F0A110092F00000100000001 /* LICENSE */,
 				F0A110022F00000100000001 /* TimerAlarm.wav */,
+				F0A110062F00000100000001 /* NOTICE.md */,
+				F0A1100B2F00000100000001 /* THIRD_PARTY_LICENSES */,
 				F0A110032F00000100000001 /* THIRD_PARTY_NOTICES.md */,
 			);
 			path = Resources;
@@ -944,6 +954,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				F0A110012F00000100000001 /* TimerAlarm.wav in Resources */,
+				F0A110052F00000100000001 /* NOTICE.md in Resources */,
+				F0A110072F00000100000001 /* THIRD_PARTY_NOTICES.md in Resources */,
+				F0A110082F00000100000001 /* LICENSE in Resources */,
+				F0A1100A2F00000100000001 /* THIRD_PARTY_LICENSES in Resources */,
 				14CEF41D2C5CAED400855D72 /* Preview Assets.xcassets in Resources */,
 				14CEF41A2C5CAED400855D72 /* Assets.xcassets in Resources */,
 				112B0EB82E30DD0F00562D6C /* MediaRemoteAdapterTestClient in Resources */,
@@ -1146,7 +1160,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1154,7 +1168,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = MacIslandXPCHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.7;
+				MARKETING_VERSION = 0.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macisland.app.MacIslandXPCHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1172,7 +1186,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1180,7 +1194,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = MacIslandXPCHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.7;
+				MARKETING_VERSION = 0.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macisland.app.MacIslandXPCHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1327,7 +1341,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"MacIsland/Preview Content\"";
 				DEVELOPMENT_TEAM = "";
@@ -1349,7 +1363,7 @@
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MacIsland displays upcoming calendar events beside the notch.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "MacIsland displays upcoming calendar events beside the notch.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "MacIsland uses the camera only while its mirror is visible.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 MacIsland contributors. GPL-3.0.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Nima Jafari. Licensed under GPL-3.0-or-later.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "MacIsland displays scheduled reminders beside calendar events.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "MacIsland displays scheduled reminders beside calendar events.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1357,7 +1371,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.7;
+				MARKETING_VERSION = 0.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macisland.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1384,7 +1398,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"MacIsland/Preview Content\"";
 				DEVELOPMENT_TEAM = "";
@@ -1405,7 +1419,7 @@
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MacIsland displays upcoming calendar events beside the notch.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "MacIsland displays upcoming calendar events beside the notch.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "MacIsland uses the camera only while its mirror is visible.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 MacIsland contributors. GPL-3.0.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Nima Jafari. Licensed under GPL-3.0-or-later.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "MacIsland displays scheduled reminders beside calendar events.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "MacIsland displays scheduled reminders beside calendar events.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1413,7 +1427,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.7;
+				MARKETING_VERSION = 0.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macisland.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

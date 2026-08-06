@@ -44,10 +44,13 @@ Developer ID authority, Gatekeeper assessment, and a stapled ticket.
 
 ## GPL source offer
 
-Every distributed archive must include `LICENSE` and `THIRD_PARTY_LICENSES`.
-Publish the exact corresponding source revision, including dependency resolution
-metadata and build instructions, alongside the binary or provide a clear written
-offer directing recipients to it. Preserve Boring Notch attribution.
+Every distributed archive must include `LICENSE`, `NOTICE`,
+`THIRD_PARTY_LICENSES`, and `SOURCE_CODE.txt`. The app bundle must include its
+`NOTICE.md` and `THIRD_PARTY_NOTICES.md` resources.
+
+`SOURCE_CODE.txt` must point to the exact corresponding `v<version>` source
+tag, including dependency-resolution metadata and build instructions. Preserve
+the Boring Notch attribution in `NOTICE`; do not use it as product branding.
 
 ## Updates
 

@@ -6,3 +6,18 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 AGENTS.md
+
+# Local editor, profiler, and Codex audit runtime output
+.vscode/
+.hex-skills/
+*.profraw
+
+# Machine-local planning and audit records
+/PLAN.md
+/STATUS.md
+/fixed.md
+/UI_AUDIT_*.md
+
+# Distribution binaries are published as GitHub Release assets, not source files
+/Dist/*.dmg
+/Dist/*.dmg.sha256

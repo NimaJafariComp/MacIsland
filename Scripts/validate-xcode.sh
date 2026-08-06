@@ -44,8 +44,12 @@ debug_app="${derived_root}-debug/Build/Products/Debug/MacIsland.app"
 plutil -extract CFBundleIdentifier raw "$debug_app/Contents/Info.plist"
 plutil -p MacIsland/MacIsland.entitlements
 plutil -p MacIslandXPCHelper/MacIslandXPCHelper.entitlements
-if rg -n 'theboringteam\\.boringnotch|TheBoredTeam\\.github\\.io/boring\\.notch/appcast\\.xml|Alcove|Perch|DynamicLake' \
-  MacIsland MacIslandXPCHelper; then
-  print -u2 'Found prohibited upstream or reference-product branding.'
+[[ -f "$debug_app/Contents/Resources/NOTICE.md" ]] || { print -u2 'Missing bundled NOTICE.md.'; exit 1; }
+[[ -f "$debug_app/Contents/Resources/THIRD_PARTY_NOTICES.md" ]] || { print -u2 'Missing bundled THIRD_PARTY_NOTICES.md.'; exit 1; }
+[[ -f "$debug_app/Contents/Resources/LICENSE" ]] || { print -u2 'Missing bundled LICENSE.'; exit 1; }
+[[ -f "$debug_app/Contents/Resources/THIRD_PARTY_LICENSES" ]] || { print -u2 'Missing bundled THIRD_PARTY_LICENSES.'; exit 1; }
+if rg -n 'https://github\\.com/TheBoredTeam/boring\\.notch|Boring Notch upstream|MacIsland is GPL-3\\.0 open source and based on Boring Notch|theboringteam\\.boringnotch|TheBoredTeam\\.github\\.io/boring\\.notch/appcast\\.xml|Alcove|Perch|DynamicLake' \
+  MacIsland MacIslandXPCHelper --glob '*.swift'; then
+  print -u2 'Found prohibited user-facing upstream or reference-product branding.'
   exit 1
 fi

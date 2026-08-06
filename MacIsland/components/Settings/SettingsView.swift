@@ -1074,6 +1074,8 @@ func lighterColor(from nsColor: NSColor, amount: CGFloat = 0.14) -> Color {
 struct About: View {
     @State private var showBuildNumber: Bool = false
     let updaterController: SPUStandardUpdaterController?
+
+    private let sourceURL = URL(string: "https://github.com/NimaJafariComp/MacIsland")!
     var body: some View {
         VStack {
             Form {
@@ -1116,29 +1118,28 @@ struct About: View {
                     }
                 }
 
-                HStack(spacing: 30) {
-                    Spacer(minLength: 0)
-                    Button {
-                        if let url = URL(string: "https://github.com/TheBoredTeam/boring.notch") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    } label: {
-                        VStack(spacing: 5) {
-                            Image("Github")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 18)
-                            Text("Boring Notch upstream")
-                        }
-                        .contentShape(Rectangle())
+                Section("Open source") {
+                    Button("License & Notices") {
+                        let documents = [
+                            Bundle.main.url(forResource: "LICENSE", withExtension: nil),
+                            Bundle.main.url(forResource: "NOTICE", withExtension: "md"),
+                            Bundle.main.url(forResource: "THIRD_PARTY_LICENSES", withExtension: nil),
+                            Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md")
+                        ].compactMap { $0 }
+                        guard !documents.isEmpty else { return }
+                        NSWorkspace.shared.activateFileViewerSelecting(documents)
                     }
-                    Spacer(minLength: 0)
+                    .accessibilityHint("Shows MacIsland license and legal notices in Finder")
+
+                    Button("MacIsland Source Code") {
+                        NSWorkspace.shared.open(sourceURL)
+                    }
+                    .accessibilityHint("Opens the MacIsland source repository")
                 }
-                .buttonStyle(PlainButtonStyle())
             }
             VStack(spacing: 0) {
                 Divider()
-                Text("MacIsland is GPL-3.0 open source and based on Boring Notch.")
+                Text("MacIsland © 2026 Nima Jafari · GPL-3.0-or-later")
                     .foregroundStyle(.secondary)
                     .padding(.top, 5)
                     .padding(.bottom, 7)

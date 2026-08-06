@@ -14,6 +14,26 @@ let defaultImage: NSImage = .init(
     accessibilityDescription: "Album Art"
 )!
 
+/// Keeps the automatic source choice deterministic and testable. An explicit
+/// source preference is never overridden; only the default Now Playing mode
+/// may promote a running direct provider.
+enum AutomaticMediaProviderSelection {
+    static func directProvider(
+        preferred: MediaControllerType,
+        runningBundleIdentifiers: Set<String>
+    ) -> MediaControllerType? {
+        guard preferred == .nowPlaying else { return nil }
+
+        if runningBundleIdentifiers.contains("com.spotify.client") {
+            return .spotify
+        }
+        if runningBundleIdentifiers.contains("com.apple.Music") {
+            return .appleMusic
+        }
+        return nil
+    }
+}
+
 class MusicManager: ObservableObject {
     // MARK: - Properties
     static let shared = MusicManager()
@@ -21,6 +41,7 @@ class MusicManager: ObservableObject {
     private var controllerCancellables = Set<AnyCancellable>()
     private var debounceIdleTask: Task<Void, Never>?
     private var nowPlayingFallbackWorkItem: DispatchWorkItem?
+    private var automaticProviderWorkItem: DispatchWorkItem?
 
     // Helper to check if macOS has removed support for NowPlayingController
     public private(set) var isNowPlayingDeprecated: Bool = false
@@ -111,6 +132,21 @@ class MusicManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Spotify can be opened after MacIsland. In automatic mode, promote
+        // it after Spotify has finished registering its AppleScript service;
+        // this also supports Spotify Connect sessions playing on an iPhone.
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didLaunchApplicationNotification)
+            .compactMap { notification in
+                (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?
+                    .bundleIdentifier
+            }
+            .filter { $0 == "com.spotify.client" || $0 == "com.apple.Music" }
+            .sink { [weak self] _ in
+                self?.scheduleAutomaticDirectProviderActivation()
+            }
+            .store(in: &cancellables)
+
         // Initialize deprecation check asynchronously
         Task { @MainActor in
             do {
@@ -162,6 +198,7 @@ class MusicManager: ObservableObject {
     public func destroy() {
         debounceIdleTask?.cancel()
         nowPlayingFallbackWorkItem?.cancel()
+        automaticProviderWorkItem?.cancel()
         cancellables.removeAll()
         controllerCancellables.removeAll()
         flipWorkItem?.cancel()
@@ -274,14 +311,33 @@ class MusicManager: ObservableObject {
         let runningBundleIdentifiers = Set(
             NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
         )
+        return AutomaticMediaProviderSelection.directProvider(
+            preferred: Defaults[.mediaController],
+            runningBundleIdentifiers: runningBundleIdentifiers
+        )
+    }
 
-        if runningBundleIdentifiers.contains("com.spotify.client") {
-            return .spotify
+    private func scheduleAutomaticDirectProviderActivation() {
+        automaticProviderWorkItem?.cancel()
+        guard Defaults[.mediaController] == .nowPlaying else { return }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.activateAutomaticDirectProviderIfNeeded()
         }
-        if runningBundleIdentifiers.contains("com.apple.Music") {
-            return .appleMusic
-        }
-        return nil
+        automaticProviderWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+    }
+
+    private func activateAutomaticDirectProviderIfNeeded() {
+        guard !isAuditPlaybackOverrideActive,
+              Defaults[.mediaController] == .nowPlaying,
+              let provider = runningDirectMediaController(),
+              activeMediaSource != provider,
+              let controller = createController(for: provider)
+        else { return }
+
+        mediaFallbackMessage = "Using \(provider.rawValue)."
+        setActiveController(controller)
     }
 
     private func isDirectProviderRunning(_ provider: MediaControllerType) -> Bool {
