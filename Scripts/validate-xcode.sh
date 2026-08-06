@@ -50,6 +50,6 @@ plutil -p MacIslandXPCHelper/MacIslandXPCHelper.entitlements
 [[ -f "$debug_app/Contents/Resources/THIRD_PARTY_LICENSES" ]] || { print -u2 'Missing bundled THIRD_PARTY_LICENSES.'; exit 1; }
 if rg -n 'https://github\\.com/TheBoredTeam/boring\\.notch|Boring Notch upstream|MacIsland is GPL-3\\.0 open source and based on Boring Notch|theboringteam\\.boringnotch|TheBoredTeam\\.github\\.io/boring\\.notch/appcast\\.xml' \
   MacIsland MacIslandXPCHelper --glob '*.swift'; then
-  print -u2 'Found prohibited user-facing upstream or reference-product branding.'
+  print -u2 'Found prohibited user-facing branding.'
   exit 1
 fi
