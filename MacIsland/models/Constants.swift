@@ -236,7 +236,9 @@ extension Defaults.Keys {
     
     // MARK: Shelf
     static let boringShelf = Key<Bool>("boringShelf", default: true)
-    static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: true)
+    // Shelf remains an explicit destination. Home is the default hover target
+    // so current media and the primary dashboard are never hidden by items.
+    static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: false)
     static let shelfTapToOpen = Key<Bool>("shelfTapToOpen", default: true)
     static let quickShareProvider = Key<String>("quickShareProvider", default: QuickShareProvider.defaultProvider.id)
     static let copyOnDrag = Key<Bool>("copyOnDrag", default: false)

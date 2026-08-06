@@ -16,6 +16,16 @@ struct ShelfView: View {
     @State private var confirmsClear = false
     private let spacing: CGFloat = 8
 
+    private var clearConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { confirmsClear },
+            set: { isPresented in
+                confirmsClear = isPresented
+                vm.isModalInteractionActive = isPresented
+            }
+        )
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             FileShareView()
@@ -30,6 +40,9 @@ struct ShelfView: View {
         // Bind Quick Look to shelf selection
         .onChange(of: selection.selectedIDs) {
             updateQuickLookSelection()
+        }
+        .onDisappear {
+            vm.isModalInteractionActive = false
         }
         .quickLookPresenter(using: quickLookService)
     }
@@ -80,7 +93,7 @@ struct ShelfView: View {
             .animation(IslandMotion.content, value: vm.dragDetectorTargeting)
             .contentShape(Rectangle())
             .onTapGesture { selection.clear() }
-            .alert("Clear Shelf?", isPresented: $confirmsClear) {
+            .alert("Clear Shelf?", isPresented: clearConfirmationBinding) {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear", role: .destructive) {
                     quickLookService.hide()
@@ -201,7 +214,9 @@ struct ShelfView: View {
             .accessibilityLabel("Select next Shelf item")
 
             Menu {
-                Button("Clear Shelf", role: .destructive) { confirmsClear = true }
+                Button("Clear Shelf", role: .destructive) {
+                    clearConfirmationBinding.wrappedValue = true
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

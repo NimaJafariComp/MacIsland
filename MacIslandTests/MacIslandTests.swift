@@ -102,6 +102,18 @@ final class MacIslandTests: XCTestCase {
         viewModel.destroy()
     }
 
+    func testModalInteractionPreventsHoverDismissal() {
+        let viewModel = BoringViewModel()
+        defer { viewModel.destroy() }
+
+        viewModel.open()
+        viewModel.isModalInteractionActive = true
+        viewModel.close()
+
+        XCTAssertEqual(viewModel.notchState, .open)
+        XCTAssertEqual(viewModel.presentationPhase, .expanding)
+    }
+
     func testOnboardingIsRequiredForEachNewDistributedBuild() {
         XCTAssertTrue(
             OnboardingBuildPolicy.requiresOnboarding(

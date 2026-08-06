@@ -55,6 +55,9 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published var edgeAutoOpenActive: Bool = false
     @Published var isHoveringCalendar: Bool = false
     @Published var isBatteryPopoverActive: Bool = false
+    /// A confirmation owned by an expanded page must remain interactive even
+    /// when its native presentation moves the pointer outside the Island.
+    @Published var isModalInteractionActive: Bool = false
 
     @Published var screenUUID: String?
 
@@ -320,15 +323,21 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func close() {
-        // Do not close while a share picker or sharing service is active
-        if SharingStateManager.shared.preventNotchClose {
+        // Do not close while a share picker, native confirmation, or sharing
+        // service is active. These presentations can temporarily move focus
+        // outside the nonactivating Island panel.
+        if SharingStateManager.shared.preventNotchClose || isModalInteractionActive {
             return
         }
         let signpostID = OSSignpostID(log: Self.lifecycleLog)
         let wasOpen = notchState == .open
         let closingView = coordinator.currentView
         let viewAfterClose: NotchViews
-        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
+        // Now Playing takes precedence over an optional Shelf landing page so
+        // hover always returns to Home when there is active media.
+        if !ShelfStateViewModel.shared.isEmpty
+            && Defaults[.openShelfByDefault]
+            && !MusicManager.shared.isPlaying {
             viewAfterClose = .shelf
         } else if coordinator.openLastTabByDefault {
             viewAfterClose = closingView
