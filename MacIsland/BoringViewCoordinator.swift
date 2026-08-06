@@ -758,7 +758,10 @@ class BoringViewCoordinator: ObservableObject {
         }
 
         let refreshID = weatherRefreshID
-        let preservesVisibleForecast = silently && weatherSnapshot != nil
+        // A launch refresh can race Location Services before it has supplied a
+        // new coordinate. Keep a previously verified forecast visible while
+        // that refresh retries instead of replacing it with an error surface.
+        let preservesVisibleForecast = weatherSnapshot != nil
         if !preservesVisibleForecast {
             weatherStatus = .loading
         }
@@ -799,9 +802,9 @@ class BoringViewCoordinator: ObservableObject {
                 self.weatherRefreshTask = nil
             } catch {
                 guard !Task.isCancelled, self.weatherRefreshID == refreshID else { return }
-                // A background refresh should not turn a previously useful
-                // forecast into a transient error surface. The next scheduled
-                // refresh can recover normally.
+                // A transient location or provider failure must not replace a
+                // useful cached forecast at launch or during background work.
+                // The next scheduled refresh can recover normally.
                 if !preservesVisibleForecast {
                     self.weatherStatus = .failed((error as? LocalizedError)?.errorDescription ?? "Weather unavailable")
                 } else {

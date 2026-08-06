@@ -693,6 +693,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEscapeKeyMonitor()
         installUIAuditKeyMonitor()
+        // Reconcile Apple Notes before the user opens Quick Notes. This is
+        // deliberately attached to the process lifecycle rather than a tab's
+        // onAppear, so deleted or edited Notes are corrected at every cold
+        // launch and restart without showing a page-level loader.
+        Task(priority: .utility) { @MainActor in
+            await AppleNotesStore.shared.refreshOnColdLaunch()
+        }
         notificationObservers.append(NotificationCenter.default.addObserver(
             forName: .islandPanelSizeDidChange,
             object: nil,

@@ -1791,3 +1791,21 @@ same instance, leaving the user with no running MacIsland app. Restart now
 starts a short-lived helper process first; it waits for the current app to exit
 and opens the exact running app bundle as a new instance. If the helper cannot
 start, the current app stays open.
+
+### 2026-08-06 — fixed: Quick Notes launch refresh was only view-lifecycle based
+
+The existing Notes preload was attached to the Island SwiftUI view, not the
+application lifecycle. A cold launch or Restart now forces one quiet source-of-
+truth reconciliation from Apple Notes during `applicationDidFinishLaunching`,
+so direct deletions and edits are reflected before Quick Notes is opened. The
+ten-minute background refresh remains in place for changes made while the app
+is running.
+
+### 2026-08-06 — fixed: startup weather refresh replaced a cached forecast with an error
+
+Weather loaded its persisted forecast at launch, then immediately requested a
+new automatic location. A temporary Location Services failure was treated as a
+foreground failure and replaced the usable cached weather with “Weather
+unavailable.” Any existing forecast now remains visible and ready while launch
+and scheduled refreshes retry silently; an error appears only when there is no
+forecast to show.

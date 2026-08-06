@@ -93,8 +93,20 @@ final class AppleNotesStore: ObservableObject {
         await refreshIfNeeded()
     }
 
+    /// Reconcile with Notes once for every new MacIsland process. This is a
+    /// force refresh because a cold launch is the user's expected boundary for
+    /// changes made directly in Notes, including deletions and edits.
+    func refreshOnColdLaunch() async {
+        await refresh(force: true)
+    }
+
     func refreshIfNeeded() async {
-        if let lastRefreshDate,
+        await refresh(force: false)
+    }
+
+    private func refresh(force: Bool) async {
+        if !force,
+           let lastRefreshDate,
            Date.now.timeIntervalSince(lastRefreshDate) < refreshInterval {
             return
         }
