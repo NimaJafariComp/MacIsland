@@ -302,6 +302,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var unlockTransitionTask: Task<Void, Never>?
     private var initialProviderStateCancellable: AnyCancellable?
     private var isDeferringInitialIslandVisibility = false
+    private var mediaVisibilityRecoveryCancellable: AnyCancellable?
+    private var visibilityRecoveryTimer: Timer?
+    private var isIslandManuallyHidden = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -309,6 +312,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         WebcamManager.shared.refreshAuthorizationStatus()
+        restoreIslandVisibilityIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -350,6 +354,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         closeNotchTask?.cancel()
         unlockTransitionTask?.cancel()
         initialProviderStateCancellable?.cancel()
+        mediaVisibilityRecoveryCancellable?.cancel()
+        visibilityRecoveryTimer?.invalidate()
         coordinator.setSystemStatesSuspended(true)
         cleanupDragDetectors()
         cleanupWindows()
@@ -690,9 +696,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// A floating panel can be moved to an inactive Space by macOS after a
+    /// display, wake, or full-screen transition. The process and its media
+    /// observers still run in that state, but the Island has no visible hover
+    /// surface. Restore the existing panel rather than recreating the app.
+    @MainActor
+    private func restoreIslandVisibilityIfNeeded() {
+        guard !isScreenLocked,
+              !isDeferringInitialIslandVisibility,
+              !isIslandManuallyHidden
+        else { return }
+
+        if Defaults[.showOnAllDisplays] {
+            let needsRecovery = windows.values.contains { panel in
+                panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace
+            }
+            guard needsRecovery else { return }
+            adjustWindowPosition(changeAlpha: false)
+            for panel in windows.values where panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace {
+                panel.alphaValue = 1
+                panel.orderFrontRegardless()
+            }
+            return
+        }
+
+        let hasRoute = NSScreen.screen(withUUID: coordinator.preferredScreenUUID ?? "") != nil
+            || (Defaults[.automaticallySwitchDisplay] && NSScreen.main != nil)
+        guard hasRoute else { return }
+
+        guard let currentPanel = window else {
+            adjustWindowPosition(changeAlpha: false)
+            return
+        }
+        guard currentPanel.alphaValue < 0.99 || !currentPanel.isVisible || !currentPanel.isOnActiveSpace else { return }
+
+        adjustWindowPosition(changeAlpha: false)
+        guard let panel = window,
+              (panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace)
+        else { return }
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
+    }
+
+    private func installIslandVisibilityRecovery() {
+        mediaVisibilityRecoveryCancellable = Publishers.CombineLatest(
+            MusicManager.shared.$isPlaying,
+            MusicManager.shared.$isPlayerIdle
+        )
+        .map { isPlaying, isPlayerIdle in isPlaying || !isPlayerIdle }
+        .removeDuplicates()
+        .filter { $0 }
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            self?.restoreIslandVisibilityIfNeeded()
+        }
+
+        visibilityRecoveryTimer = Timer.scheduledTimer(
+            withTimeInterval: 4,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.restoreIslandVisibilityIfNeeded()
+            }
+        }
+        if let visibilityRecoveryTimer {
+            RunLoop.main.add(visibilityRecoveryTimer, forMode: .common)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEscapeKeyMonitor()
         installUIAuditKeyMonitor()
+        installIslandVisibilityRecovery()
         // Reconcile Apple Notes before the user opens Quick Notes. This is
         // deliberately attached to the process lifecycle rather than a tab's
         // onAppear, so deleted or edited Notes are corrected at every cold
@@ -738,6 +813,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.adjustWindowPosition(changeAlpha: true)
+                self?.restoreIslandVisibilityIfNeeded()
                 self?.setupDragDetectors()
             }
         })
@@ -754,9 +830,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         notificationObservers.append(NotificationCenter.default.addObserver(
             forName: Notification.Name.automaticallySwitchDisplayChanged, object: nil, queue: nil
         ) { [weak self] _ in
-            guard let self = self, let window = self.window else { return }
             Task { @MainActor in
-                window.alphaValue = self.coordinator.selectedScreenUUID == self.coordinator.preferredScreenUUID ? 1 : 0
+                guard let self else { return }
+                self.adjustWindowPosition(changeAlpha: true)
+                self.restoreIslandVisibilityIfNeeded()
+                self.setupDragDetectors()
             }
         })
 
@@ -971,6 +1049,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             window?.alphaValue = 1
         }
+        restoreIslandVisibilityIfNeeded()
     }
 
     @MainActor
@@ -1212,9 +1291,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func togglePopover(_ sender: Any?) {
         if window?.isVisible == true {
+            isIslandManuallyHidden = true
             window?.orderOut(nil)
         } else {
-            window?.orderFrontRegardless()
+            isIslandManuallyHidden = false
+            restoreIslandVisibilityIfNeeded()
         }
     }
 
