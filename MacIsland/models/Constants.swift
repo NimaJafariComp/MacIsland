@@ -30,12 +30,6 @@ enum CalendarSelectionState: Codable, Defaults.Serializable {
     case selected(Set<String>)
 }
 
-enum HideNotchOption: String, Defaults.Serializable {
-    case always
-    case nowPlayingOnly
-    case never
-}
-
 /// The visual treatment of the expanded island. Themes deliberately share the
 /// same geometry so changing one never changes the interaction target.
 enum IslandTheme: String, CaseIterable, Identifiable, Defaults.Serializable {
@@ -269,9 +263,6 @@ extension Defaults.Keys {
     static let hideAllDayEvents = Key<Bool>("hideAllDayEvents", default: false)
     static let showFullEventTitles = Key<Bool>("showFullEventTitles", default: false)
     static let autoScrollToNextEvent = Key<Bool>("autoScrollToNextEvent", default: true)
-    
-    // MARK: Fullscreen Media Detection
-    static let hideNotchOption = Key<HideNotchOption>("hideNotchOption", default: .nowPlayingOnly)
     
     // MARK: Media Controller
     static let mediaController = Key<MediaControllerType>("mediaController", default: defaultMediaController)

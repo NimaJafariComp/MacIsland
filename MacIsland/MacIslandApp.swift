@@ -290,6 +290,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenUnlockedObserver: Any?
     private var workspaceWakeObserver: Any?
     private var workspaceSleepObserver: Any?
+    private var activeSpaceObserver: Any?
     private var escapeKeyMonitor: Any?
     private var localEscapeKeyMonitor: Any?
     private var uiAuditKeyMonitor: Any?
@@ -334,6 +335,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let observer = workspaceSleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             workspaceSleepObserver = nil
+        }
+        if let observer = activeSpaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            activeSpaceObserver = nil
         }
         if let escapeKeyMonitor {
             NSEvent.removeMonitor(escapeKeyMonitor)
@@ -701,19 +706,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// observers still run in that state, but the Island has no visible hover
     /// surface. Restore the existing panel rather than recreating the app.
     @MainActor
-    private func restoreIslandVisibilityIfNeeded() {
+    private func restoreIslandVisibilityIfNeeded(forceActiveSpaceAttachment: Bool = false) {
         guard !isScreenLocked,
               !isDeferringInitialIslandVisibility,
               !isIslandManuallyHidden
         else { return }
 
         if Defaults[.showOnAllDisplays] {
-            let needsRecovery = windows.values.contains { panel in
+            let needsRecovery = forceActiveSpaceAttachment || windows.values.contains { panel in
                 panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace
             }
             guard needsRecovery else { return }
             adjustWindowPosition(changeAlpha: false)
-            for panel in windows.values where panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace {
+            for panel in windows.values where forceActiveSpaceAttachment || panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace {
                 panel.alphaValue = 1
                 panel.orderFrontRegardless()
             }
@@ -728,11 +733,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             adjustWindowPosition(changeAlpha: false)
             return
         }
-        guard currentPanel.alphaValue < 0.99 || !currentPanel.isVisible || !currentPanel.isOnActiveSpace else { return }
+        guard forceActiveSpaceAttachment || currentPanel.alphaValue < 0.99 || !currentPanel.isVisible || !currentPanel.isOnActiveSpace else { return }
 
         adjustWindowPosition(changeAlpha: false)
         guard let panel = window,
-              (panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace)
+              (forceActiveSpaceAttachment || panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace)
         else { return }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
@@ -896,6 +901,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { _ in
             WebcamManager.shared.pauseSessionForSleep()
+        }
+
+        activeSpaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                // Full-screen and tiled Spaces retain MacIsland. Reassert the
+                // existing panel on the newly active Space instead of treating
+                // the transition as a reason to hide compact content.
+                self.adjustWindowPosition(changeAlpha: false)
+                self.restoreIslandVisibilityIfNeeded(forceActiveSpaceAttachment: true)
+                self.setupDragDetectors()
+            }
         }
 
         KeyboardShortcuts.onKeyDown(for: .toggleSneakPeek) { [weak self] in

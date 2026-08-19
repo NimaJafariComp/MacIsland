@@ -199,17 +199,15 @@ struct ContentView: View {
                         || (Defaults[.inlineHUD]
                             && coordinator.sneakPeek.type != .music
                             && coordinator.sneakPeek.type != .battery)),
-                isTimerVisible: coordinator.timerStatus.isVisible && !vm.hideOnClosed,
-                isTimerCompleted: coordinator.timerStatus == .completed && !vm.hideOnClosed,
+                isTimerVisible: coordinator.timerStatus.isVisible,
+                isTimerCompleted: coordinator.timerStatus == .completed,
                 isMediaVisible: (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
                     && (musicManager.isPlaying || !musicManager.isPlayerIdle)
-                    && coordinator.musicLiveActivityEnabled
-                    && !vm.hideOnClosed,
+                    && coordinator.musicLiveActivityEnabled,
                 isIdleFaceVisible: !coordinator.expandingView.show
                     && !musicManager.isPlaying
                     && musicManager.isPlayerIdle
-                    && Defaults[.showNotHumanFace]
-                    && !vm.hideOnClosed,
+                    && Defaults[.showNotHumanFace],
                 isScreenLocked: vm.isScreenLocked
             )
         )
@@ -530,7 +528,7 @@ struct ContentView: View {
             compactSneakPeek
                 .zIndex(2)
         }
-        .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
+        .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
             view.fixedSize()
         }
     }
@@ -559,7 +557,6 @@ struct ContentView: View {
                 .padding(.trailing, 8)
             } else if coordinator.sneakPeek.type == .music,
                       vm.notchState == .closed,
-                      !vm.hideOnClosed,
                       Defaults[.sneakPeekStyles] == .standard {
                 HStack(alignment: .center) {
                     Image(systemName: "music.note")

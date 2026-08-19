@@ -138,11 +138,11 @@ final class MacIslandTests: XCTestCase {
         )
     }
 
-    func testClosedActivitiesAreVisibleBeforeFullscreenDetectionPublishes() {
+    func testClosedIslandKeepsItsPhysicalHeight() {
         let viewModel = BoringViewModel()
         defer { viewModel.destroy() }
 
-        XCTAssertFalse(viewModel.hideOnClosed)
+        XCTAssertEqual(viewModel.effectiveClosedNotchHeight, viewModel.closedNotchSize.height)
     }
 
     func testSystemStatePresentationUsesPrivateLabelsAndPublicReachabilityCopy() {

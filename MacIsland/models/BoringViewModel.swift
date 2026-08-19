@@ -34,7 +34,6 @@ enum IslandPresentationPhase: Equatable {
 class BoringViewModel: NSObject, ObservableObject {
     private static let lifecycleLog = OSLog(subsystem: "com.macisland.app", category: "IslandLifecycle")
     @ObservedObject var coordinator = BoringViewCoordinator.shared
-    @ObservedObject var detector = FullscreenMediaDetector.shared
 
     @Published var contentType: ContentType = .normal
     @Published private(set) var notchState: NotchState = .closed
@@ -46,10 +45,6 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published var anyDropZoneTargeting: Bool = false
     var cancellables: Set<AnyCancellable> = []
     
-    // Stay visible until fullscreen detection has positively identified a
-    // fullscreen app. Starting hidden suppresses closed live activities before
-    // the detector's first asynchronous publication.
-    @Published var hideOnClosed: Bool = false
     @Published private(set) var isScreenLocked: Bool = false
 
     @Published var edgeAutoOpenActive: Bool = false
@@ -128,8 +123,6 @@ class BoringViewModel: NSObject, ObservableObject {
             .assign(to: \.anyDropZoneTargeting, on: self)
             .store(in: &cancellables)
         
-        setupDetectorObserver()
-
         Defaults.publisher(.showMirror)
             .map(\.newValue)
             .removeDuplicates()
@@ -141,44 +134,11 @@ class BoringViewModel: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
     
-    private func setupDetectorObserver() {
-        // Publisher for the user’s fullscreen detection setting
-        let enabledPublisher = Defaults
-            .publisher(.hideNotchOption)
-            .map(\.newValue)
-            .map { $0 != .never }
-            .removeDuplicates()
-
-        // Publisher for the current screen UUID (non-nil, distinct)
-        let screenPublisher = $screenUUID
-            .compactMap { $0 }
-            .removeDuplicates()
-
-        // Publisher for fullscreen status dictionary
-        let fullscreenStatusPublisher = detector.$fullscreenStatus
-            .removeDuplicates()
-
-        // Combine all three: screen UUID, fullscreen status, and enabled setting
-        Publishers.CombineLatest3(screenPublisher, fullscreenStatusPublisher, enabledPublisher)
-            .map { screenUUID, fullscreenStatus, enabled in
-                let isFullscreen = fullscreenStatus[screenUUID] ?? false
-                return enabled && isFullscreen
-            }
-            .removeDuplicates()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] shouldHide in
-                withAnimation(IslandMotion.content) {
-                    self?.hideOnClosed = shouldHide
-                }
-            }
-            .store(in: &cancellables)
-    }
-
-    // Computed property for effective notch height
+    // Full-screen and tiled apps do not occupy the physical notch region.
+    // The Island therefore remains available for compact activities and hover
+    // on every active Space; Space changes only affect panel placement.
     var effectiveClosedNotchHeight: CGFloat {
-        let currentScreen = screenUUID.flatMap { NSScreen.screen(withUUID: $0) }
-        let noNotchAndFullscreen = hideOnClosed && (currentScreen?.safeAreaInsets.top ?? 0 <= 0 || currentScreen == nil)
-        return noNotchAndFullscreen ? 0 : closedNotchSize.height
+        closedNotchSize.height
     }
 
     var chinHeight: CGFloat {

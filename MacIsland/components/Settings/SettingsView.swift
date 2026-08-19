@@ -816,7 +816,6 @@ struct Media: View {
     @Default(.waitInterval) var waitInterval
     @Default(.mediaController) var mediaController
     @ObservedObject var coordinator = BoringViewCoordinator.shared
-    @Default(.hideNotchOption) var hideNotchOption
     @Default(.enableSneakPeek) private var enableSneakPeek
     @Default(.sneakPeekStyles) var sneakPeekStyles
 
@@ -880,19 +879,6 @@ struct Media: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                }
-                Picker(
-                    selection: $hideNotchOption,
-                    label:
-                        HStack {
-                            Text("Full screen behavior")
-                            customBadge(text: "Beta")
-                        }
-                ) {
-                    Text("Hide for all apps").tag(HideNotchOption.always)
-                    Text("Hide for media app only").tag(
-                        HideNotchOption.nowPlayingOnly)
-                    Text("Never hide").tag(HideNotchOption.never)
                 }
             } header: {
                 Text("Media playback live activity")
