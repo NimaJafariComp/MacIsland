@@ -669,6 +669,9 @@ final class MacIslandTests: XCTestCase {
         XCTAssertTrue(AppLifecyclePolicy.shouldMonitorDragDetection(enabled: true, isScreenLocked: false))
         XCTAssertFalse(AppLifecyclePolicy.shouldResumeCameraAfterWake(isMirrorExpanded: false))
         XCTAssertTrue(AppLifecyclePolicy.shouldResumeCameraAfterWake(isMirrorExpanded: true))
+        XCTAssertTrue(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.fullScreenAuxiliary))
+        XCTAssertFalse(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.moveToActiveSpace))
 
         let viewModel = BoringViewModel()
         defer { viewModel.destroy() }

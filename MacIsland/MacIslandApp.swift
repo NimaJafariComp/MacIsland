@@ -565,16 +565,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             auditWindow.isOpaque = false
             auditWindow.backgroundColor = .clear
             auditWindow.level = .mainMenu + 3
-            auditWindow.collectionBehavior = [
-                .fullScreenAuxiliary,
-                .stationary,
-                // A floating Island may join every Space, but it must also be
-                // attached to the Space the person is currently using. A
-                // production panel cannot safely combine this with
-                // `canJoinAllSpaces`: on macOS it can remain in an inactive
-                // Space, leaving a live but invisible Island.
-                .moveToActiveSpace,
-            ]
+            // The Island owns the physical notch region, which exists above
+            // every desktop and full-screen Space. `moveToActiveSpace` only
+            // migrates a panel when AppKit makes it key; a hover-only panel
+            // can therefore be stranded on a previous Space after normal
+            // full-screen or tiled-window use. Join every Space instead.
+            auditWindow.collectionBehavior = AppLifecyclePolicy.islandPanelCollectionBehavior
             // MacIsland is an accessory surface, not a transient inspector.
             // It must remain visible while another app owns keyboard focus.
             auditWindow.hidesOnDeactivate = false
@@ -701,24 +697,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A floating panel can be moved to an inactive Space by macOS after a
-    /// display, wake, or full-screen transition. The process and its media
-    /// observers still run in that state, but the Island has no visible hover
-    /// surface. Restore the existing panel rather than recreating the app.
+    /// A retained panel can be ordered out or left transparent after a display,
+    /// wake, or launch transition. Space membership is declarative through
+    /// `canJoinAllSpaces`; recovery only restores a panel that is actually
+    /// hidden, rather than trying to migrate it between Spaces at runtime.
     @MainActor
-    private func restoreIslandVisibilityIfNeeded(forceActiveSpaceAttachment: Bool = false) {
+    private func restoreIslandVisibilityIfNeeded() {
         guard !isScreenLocked,
               !isDeferringInitialIslandVisibility,
               !isIslandManuallyHidden
         else { return }
 
         if Defaults[.showOnAllDisplays] {
-            let needsRecovery = forceActiveSpaceAttachment || windows.values.contains { panel in
-                panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace
-            }
+            let needsRecovery = windows.values.contains(where: AppLifecyclePolicy.shouldRestoreIslandPanel)
             guard needsRecovery else { return }
             adjustWindowPosition(changeAlpha: false)
-            for panel in windows.values where forceActiveSpaceAttachment || panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace {
+            for panel in windows.values where AppLifecyclePolicy.shouldRestoreIslandPanel(panel) {
                 panel.alphaValue = 1
                 panel.orderFrontRegardless()
             }
@@ -733,11 +727,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             adjustWindowPosition(changeAlpha: false)
             return
         }
-        guard forceActiveSpaceAttachment || currentPanel.alphaValue < 0.99 || !currentPanel.isVisible || !currentPanel.isOnActiveSpace else { return }
+        guard AppLifecyclePolicy.shouldRestoreIslandPanel(currentPanel) else { return }
 
         adjustWindowPosition(changeAlpha: false)
         guard let panel = window,
-              (forceActiveSpaceAttachment || panel.alphaValue < 0.99 || !panel.isVisible || !panel.isOnActiveSpace)
+              AppLifecyclePolicy.shouldRestoreIslandPanel(panel)
         else { return }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
@@ -910,11 +904,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // Full-screen and tiled Spaces retain MacIsland. Reassert the
-                // existing panel on the newly active Space instead of treating
-                // the transition as a reason to hide compact content.
+                // The panel joins every Space, including full-screen ones.
+                // Refresh only its geometry after a Space transition; do not
+                // attempt imperative Space migration for this hover surface.
                 self.adjustWindowPosition(changeAlpha: false)
-                self.restoreIslandVisibilityIfNeeded(forceActiveSpaceAttachment: true)
+                self.restoreIslandVisibilityIfNeeded()
                 self.setupDragDetectors()
             }
         }
@@ -1376,6 +1370,20 @@ extension Notification.Name {
 }
 
 enum AppLifecyclePolicy {
+    /// The Island occupies the physical notch area, so its panel must be
+    /// available on every desktop and in full-screen auxiliary spaces. A
+    /// hover-only panel must not rely on becoming key to migrate Spaces.
+    static let islandPanelCollectionBehavior: NSWindow.CollectionBehavior = [
+        .canJoinAllSpaces,
+        .fullScreenAuxiliary,
+        .stationary,
+        .ignoresCycle,
+    ]
+
+    static func shouldRestoreIslandPanel(_ panel: NSWindow) -> Bool {
+        panel.alphaValue < 0.99 || !panel.isVisible
+    }
+
     static func detachedDisplayIdentifiers(existing: Set<String>, current: Set<String>) -> Set<String> {
         existing.subtracting(current)
     }
