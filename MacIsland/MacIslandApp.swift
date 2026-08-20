@@ -646,8 +646,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // morph, resulting in a second window jump part-way through it.
         // Display-routing callers refresh metrics before reaching this method.
         let geometry = IslandPanelGeometry(screenFrame: screen.frame, panelSize: viewModel.panelSize)
+        let needsFrameUpdate = window.frame.integral != geometry.frame.integral
         let shouldAnimateFrame = animateFrame && IslandMotion.shouldAnimateAppKitStateChanges
-            && window.frame.integral != geometry.frame.integral
+            && needsFrameUpdate
         if shouldAnimateFrame {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = IslandMotion.appKitStateDuration
@@ -656,7 +657,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 window.animator().setFrame(geometry.frame, display: true)
             }
-        } else {
+        } else if needsFrameUpdate {
             window.setFrame(geometry.frame, display: true)
         }
         if !isDeferringInitialIslandVisibility {
@@ -731,7 +732,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if Defaults[.showOnAllDisplays] {
             guard !NSScreen.screens.isEmpty else { return }
-            adjustWindowPosition(changeAlpha: false)
+            // Window frame changes ask AppKit to recompute the hosting view's
+            // constraints. Never do that while SwiftUI is presenting or
+            // changing an expanded page; a wake retry can otherwise collide
+            // with that display cycle and raise an AppKit exception.
+            let canRepositionPanels = windows.allSatisfy { identifier, _ in
+                guard let viewModel = viewModels[identifier] else { return false }
+                return AppLifecyclePolicy.shouldApplyRecoveryGeometry(
+                    presentationPhase: viewModel.presentationPhase
+                )
+            }
+            if canRepositionPanels {
+                adjustWindowPosition(changeAlpha: false)
+            }
             for panel in windows.values {
                 panel.collectionBehavior = AppLifecyclePolicy.islandPanelCollectionBehavior
                 panel.hidesOnDeactivate = false
@@ -751,25 +764,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let panel = window else { return }
 
-        vm.screenUUID = screen.displayUUID
-        vm.updateMetrics()
-        if vm.notchState == .closed {
-            vm.notchSize = vm.closedNotchSize
+        let canRepositionPanel = AppLifecyclePolicy.shouldApplyRecoveryGeometry(
+            presentationPhase: vm.presentationPhase
+        )
+        if canRepositionPanel {
+            vm.screenUUID = screen.displayUUID
+            vm.updateMetrics()
+            if vm.notchState == .closed {
+                vm.notchSize = vm.closedNotchSize
+            }
+            positionWindow(panel, on: screen, with: vm, animateFrame: false)
         }
-        positionWindow(panel, on: screen, with: vm, animateFrame: false)
         panel.collectionBehavior = AppLifecyclePolicy.islandPanelCollectionBehavior
         panel.hidesOnDeactivate = false
         panel.alphaValue = 1
         panel.orderFrontRegardless()
-        if vm.notchState == .closed {
+        if canRepositionPanel, vm.notchState == .closed {
             vm.close()
         }
     }
 
     /// A retained panel can be ordered out or left transparent after a display,
-    /// wake, or launch transition. Space membership is declarative through
-    /// `canJoinAllSpaces`; recovery only restores a panel that is actually
-    /// hidden, rather than trying to migrate it between Spaces at runtime.
+    /// wake, or launch transition. The periodic health check intentionally
+    /// handles only these ordinary visibility states; system-transition
+    /// reassertion is scheduled separately so tab changes never resize a live
+    /// hosting view from the health timer.
     @MainActor
     private func restoreIslandVisibilityIfNeeded() {
         guard !isScreenLocked,
@@ -1429,19 +1448,17 @@ enum AppLifecyclePolicy {
     static let presentationRecoveryDelays: [TimeInterval] = [0, 0.35, 1.0]
 
     static func shouldRestoreIslandPanel(_ panel: NSWindow) -> Bool {
-        requiresPresentationRecovery(
-            alphaValue: panel.alphaValue,
-            isVisible: panel.isVisible,
-            isOnActiveSpace: panel.isOnActiveSpace
-        )
+        panel.alphaValue < 0.99 || !panel.isVisible
     }
 
-    static func requiresPresentationRecovery(
-        alphaValue: CGFloat,
-        isVisible: Bool,
-        isOnActiveSpace: Bool
+    /// Wake and Space recovery can safely adjust a panel frame only after the
+    /// Island is compact. Expanded pages own a live SwiftUI layout transaction,
+    /// so recovery still restores their z-order and Space behavior but defers
+    /// geometry until the normal compact state is reached.
+    static func shouldApplyRecoveryGeometry(
+        presentationPhase: IslandPresentationPhase
     ) -> Bool {
-        alphaValue < 0.99 || !isVisible || !isOnActiveSpace
+        presentationPhase == .compact
     }
 
     static func detachedDisplayIdentifiers(existing: Set<String>, current: Set<String>) -> Set<String> {
