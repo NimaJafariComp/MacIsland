@@ -305,6 +305,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDeferringInitialIslandVisibility = false
     private var mediaVisibilityRecoveryCancellable: AnyCancellable?
     private var visibilityRecoveryTimer: Timer?
+    private var presentationRecoveryTask: Task<Void, Never>?
     private var isIslandManuallyHidden = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -313,7 +314,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         WebcamManager.shared.refreshAuthorizationStatus()
-        restoreIslandVisibilityIfNeeded()
+        scheduleIslandPresentationRecovery()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -358,6 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         BatteryActivityManager.shared.shutdown()
         closeNotchTask?.cancel()
         unlockTransitionTask?.cancel()
+        presentationRecoveryTask?.cancel()
         initialProviderStateCancellable?.cancel()
         mediaVisibilityRecoveryCancellable?.cancel()
         visibilityRecoveryTimer?.invalidate()
@@ -369,6 +371,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func onScreenLocked(_ notification: Notification) {
+        presentationRecoveryTask?.cancel()
         isScreenLocked = true
         setScreenLockState(true)
         WebcamManager.shared.stopSession()
@@ -390,6 +393,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             disableSkyLightOnAllWindows()
         }
+        scheduleIslandPresentationRecovery()
     }
 
     @MainActor
@@ -693,6 +697,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// WindowServer can leave an AppKit panel alive but absent from the active
+    /// Space after wake or unlock. AppKit still reports that panel as visible,
+    /// so this path deliberately reasserts its supported presentation state.
+    @MainActor
+    private func scheduleIslandPresentationRecovery() {
+        presentationRecoveryTask?.cancel()
+        presentationRecoveryTask = Task { @MainActor [weak self] in
+            for delay in AppLifecyclePolicy.presentationRecoveryDelays {
+                guard !Task.isCancelled else { return }
+                if delay > 0 {
+                    do {
+                        try await Task.sleep(for: .milliseconds(Int(delay * 1_000)))
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled else { return }
+                self?.reassertIslandPresentation()
+            }
+        }
+    }
+
+    /// Uses only public AppKit panel APIs. It is intentionally limited to
+    /// lifecycle recovery rather than the normal four-second health check, so
+    /// it never steals stacking priority during ordinary Island interaction.
+    @MainActor
+    private func reassertIslandPresentation() {
+        guard !isScreenLocked,
+              !isDeferringInitialIslandVisibility,
+              !isIslandManuallyHidden
+        else { return }
+
+        if Defaults[.showOnAllDisplays] {
+            guard !NSScreen.screens.isEmpty else { return }
+            adjustWindowPosition(changeAlpha: false)
+            for panel in windows.values {
+                panel.collectionBehavior = AppLifecyclePolicy.islandPanelCollectionBehavior
+                panel.hidesOnDeactivate = false
+                panel.alphaValue = 1
+                panel.orderFrontRegardless()
+            }
+            return
+        }
+
+        guard let screen = NSScreen.screen(withUUID: coordinator.preferredScreenUUID ?? "")
+            ?? window?.screen
+            ?? NSScreen.main
+        else { return }
+
+        if window == nil {
+            window = createBoringNotchWindow(for: screen, with: vm)
+        }
+        guard let panel = window else { return }
+
+        vm.screenUUID = screen.displayUUID
+        vm.updateMetrics()
+        if vm.notchState == .closed {
+            vm.notchSize = vm.closedNotchSize
+        }
+        positionWindow(panel, on: screen, with: vm, animateFrame: false)
+        panel.collectionBehavior = AppLifecyclePolicy.islandPanelCollectionBehavior
+        panel.hidesOnDeactivate = false
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
+        if vm.notchState == .closed {
+            vm.close()
+        }
+    }
+
     /// A retained panel can be ordered out or left transparent after a display,
     /// wake, or launch transition. Space membership is declarative through
     /// `canJoinAllSpaces`; recovery only restores a panel that is actually
@@ -705,32 +778,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         else { return }
 
         if Defaults[.showOnAllDisplays] {
-            let needsRecovery = windows.values.contains(where: AppLifecyclePolicy.shouldRestoreIslandPanel)
-            guard needsRecovery else { return }
-            adjustWindowPosition(changeAlpha: false)
-            for panel in windows.values where AppLifecyclePolicy.shouldRestoreIslandPanel(panel) {
-                panel.alphaValue = 1
-                panel.orderFrontRegardless()
-            }
+            guard windows.values.contains(where: AppLifecyclePolicy.shouldRestoreIslandPanel) else { return }
+        } else if let currentPanel = window {
+            guard AppLifecyclePolicy.shouldRestoreIslandPanel(currentPanel) else { return }
+        } else {
             return
         }
 
-        let hasRoute = NSScreen.screen(withUUID: coordinator.preferredScreenUUID ?? "") != nil
-            || (Defaults[.automaticallySwitchDisplay] && NSScreen.main != nil)
-        guard hasRoute else { return }
-
-        guard let currentPanel = window else {
-            adjustWindowPosition(changeAlpha: false)
-            return
-        }
-        guard AppLifecyclePolicy.shouldRestoreIslandPanel(currentPanel) else { return }
-
-        adjustWindowPosition(changeAlpha: false)
-        guard let panel = window,
-              AppLifecyclePolicy.shouldRestoreIslandPanel(panel)
-        else { return }
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
+        reassertIslandPresentation()
     }
 
     private func installIslandVisibilityRecovery() {
@@ -875,13 +930,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.adjustWindowPosition(changeAlpha: true)
                 self?.setupDragDetectors()
                 if AppLifecyclePolicy.shouldResumeCameraAfterWake(
                     isMirrorExpanded: self?.vm.isCameraExpanded == true
                 ) {
                     WebcamManager.shared.resumeSessionIfNeeded()
                 }
+                self?.scheduleIslandPresentationRecovery()
             }
         }
 
@@ -900,12 +955,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // The panel joins every Space, including full-screen ones.
-                // Refresh only its geometry after a Space transition; do not
-                // attempt imperative Space migration for this hover surface.
-                self.adjustWindowPosition(changeAlpha: false)
-                self.restoreIslandVisibilityIfNeeded()
                 self.setupDragDetectors()
+                self.scheduleIslandPresentationRecovery()
             }
         }
 
@@ -1214,10 +1265,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if screensChanged {
             DispatchQueue.main.async { [weak self] in
-                // `adjustWindowPosition` removes only detached-display panels.
-                // Keeping retained panels avoids a visible close/open jump.
-                self?.adjustWindowPosition(changeAlpha: true)
                 self?.setupDragDetectors()
+                self?.scheduleIslandPresentationRecovery()
             }
         }
     }
@@ -1375,8 +1424,24 @@ enum AppLifecyclePolicy {
         .ignoresCycle,
     ]
 
+    /// Re-apply public panel presentation after the WindowServer finishes a
+    /// wake, unlock, or active-Space transition. The delays are cancellable.
+    static let presentationRecoveryDelays: [TimeInterval] = [0, 0.35, 1.0]
+
     static func shouldRestoreIslandPanel(_ panel: NSWindow) -> Bool {
-        panel.alphaValue < 0.99 || !panel.isVisible
+        requiresPresentationRecovery(
+            alphaValue: panel.alphaValue,
+            isVisible: panel.isVisible,
+            isOnActiveSpace: panel.isOnActiveSpace
+        )
+    }
+
+    static func requiresPresentationRecovery(
+        alphaValue: CGFloat,
+        isVisible: Bool,
+        isOnActiveSpace: Bool
+    ) -> Bool {
+        alphaValue < 0.99 || !isVisible || !isOnActiveSpace
     }
 
     static func detachedDisplayIdentifiers(existing: Set<String>, current: Set<String>) -> Set<String> {

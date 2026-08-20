@@ -672,6 +672,21 @@ final class MacIslandTests: XCTestCase {
         XCTAssertTrue(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.canJoinAllSpaces))
         XCTAssertTrue(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.fullScreenAuxiliary))
         XCTAssertFalse(AppLifecyclePolicy.islandPanelCollectionBehavior.contains(.moveToActiveSpace))
+        XCTAssertFalse(
+            AppLifecyclePolicy.requiresPresentationRecovery(
+                alphaValue: 1,
+                isVisible: true,
+                isOnActiveSpace: true
+            )
+        )
+        XCTAssertTrue(
+            AppLifecyclePolicy.requiresPresentationRecovery(
+                alphaValue: 1,
+                isVisible: true,
+                isOnActiveSpace: false
+            )
+        )
+        XCTAssertEqual(AppLifecyclePolicy.presentationRecoveryDelays, [0, 0.35, 1.0])
 
         let viewModel = BoringViewModel()
         defer { viewModel.destroy() }
