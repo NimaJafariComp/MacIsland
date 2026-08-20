@@ -447,13 +447,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if shouldCleanupMulti {
             windows.values.forEach { window in
                 window.close()
-                NotchSpaceManager.shared.notchSpace.windows.remove(window)
             }
             windows.removeAll()
             viewModels.removeAll()
         } else if let window = window {
             window.close()
-            NotchSpaceManager.shared.notchSpace.windows.remove(window)
             if let obs = windowScreenDidChangeObserver {
                 NotificationCenter.default.removeObserver(obs)
                 windowScreenDidChangeObserver = nil
@@ -615,8 +613,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             window.orderFrontRegardless()
         }
-        NotchSpaceManager.shared.notchSpace.windows.insert(window)
-
         // Observe when the window's screen changes so we can update drag detectors
         windowScreenDidChangeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeScreenNotification,
@@ -1237,7 +1233,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ) {
                 if let window = windows[uuid] {
                     window.close()
-                    NotchSpaceManager.shared.notchSpace.windows.remove(window)
                     windows.removeValue(forKey: uuid)
                     viewModels.removeValue(forKey: uuid)
                 }
